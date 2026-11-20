@@ -104,6 +104,13 @@ QSize MemberListRow::tagSize() const {
 QSize MemberListRow::rightActionSize() const {
 	const auto tag = tagSize();
 	const auto remove = removeSize();
+	if (tag.isEmpty() && !remove.isEmpty()) {
+		// Without a tag the remove pill keeps to the name line.
+		const auto &st = st::defaultPeerListItem;
+		const auto top = st.namePosition.y()
+			+ (st.nameStyle.font->height - remove.height()) / 2;
+		return QSize(remove.width(), top + remove.height());
+	}
 	const auto w = std::max(tag.width(), remove.width());
 	return (w > 0)
 		? QSize(w, st::defaultPeerListItem.height)
@@ -485,6 +492,27 @@ void MemberListRow::paintRemove(
 		_removeTextWidth);
 
 	p.setOpacity(o);
+}
+
+int MemberListRow::paintNameIconGetLeadingWidth(
+		Painter &p,
+		Fn<void()> repaint,
+		crl::time now,
+		int nameLeft,
+		int nameTop,
+		int outerWidth,
+		bool selected) {
+	if (!_refreshCallback) {
+		_refreshCallback = repaint;
+	}
+	return PeerListRow::paintNameIconGetLeadingWidth(
+		p,
+		std::move(repaint),
+		now,
+		nameLeft,
+		nameTop,
+		outerWidth,
+		selected);
 }
 
 void MemberListRow::elementsPaint(

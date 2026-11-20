@@ -864,10 +864,14 @@ void EditFilterBox(
 				p.setOpacity(1. - p.opacity());
 				p.setFont(st::normalFont);
 				p.setPen(st::windowSubTextFg);
+				const auto textRect = preview->rect().translated(-shift, 0)
+					- st::boxRowPadding;
 				p.drawText(
-					preview->rect().translated(-shift, 0) - st::boxRowPadding,
-					tr::lng_filters_tag_color_no(tr::now),
-					style::al_right);
+					textRect,
+					style::al_right,
+					st::normalFont->elided(
+						tr::lng_filters_tag_color_no(tr::now),
+						textRect.width()));
 			}
 		}, preview->lifetime());
 
@@ -881,7 +885,7 @@ void EditFilterBox(
 		};
 		const auto upperTitle = [=] {
 			auto value = state->title.current();
-			value.text = value.text.toUpper();
+			value.text = Ui::Text::Upper(value.text);
 			return value;
 		};
 		state->title.changes(
@@ -946,9 +950,9 @@ void EditFilterBox(
 			}
 		}
 		line->sizeValue() | rpl::on_next([=](const QSize &size) {
-			const auto totalWidth = buttons.size() * side;
-			const auto spacing = (size.width() - totalWidth)
-				/ (buttons.size() - 1);
+			const auto count = int(buttons.size());
+			const auto totalWidth = count * side;
+			const auto spacing = (size.width() - totalWidth) / (count - 1);
 			for (auto i = 0; i < kColorsCount; ++i) {
 				const auto &button = buttons[i];
 				button->moveToLeft(i * (side + spacing), 0);

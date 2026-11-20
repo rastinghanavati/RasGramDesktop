@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "platform/platform_specific.h"
 #include "core/crash_reports.h"
 #include "core/launcher.h"
+#include "core/update_channel.h"
 #include "core/version.h"
 #include "mtproto/facade.h"
 
@@ -385,22 +386,28 @@ void start() {
 	QDir().mkpath(cWorkingDir() + u"tdata"_q);
 
 	launcher.workingFolderReady();
-	CrashReports::StartCatching();
+	const auto crashCatchingWarning = CrashReports::StartCatching();
 
 	if (!LogsData->openMain()) {
 		delete LogsData;
 		LogsData = nullptr;
 	}
 
-	LOG(("Launched version: %1, install beta: %2, alpha: %3, debug mode: %4"
+	const auto canary = Core::BuildIsCanary
+		? u", canary: #%1"_q.arg(Core::CanaryBuildCounter)
+		: QString();
+	LOG(("Launched version: %1, install beta: %2%3, debug mode: %4"
 		).arg(AppVersion
 		).arg(Logs::b(cInstallBetaVersion())
-		).arg(cAlphaVersion()
+		).arg(canary
 		).arg(Logs::b(DebugEnabled())));
 	LOG(("Executable dir: %1, name: %2").arg(cExeDir(), cExeName()));
 	LOG(("Initial working dir: %1").arg(launcher.initialWorkingDir()));
 	LOG(("Working dir: %1").arg(cWorkingDir()));
 	LOG(("Command line: %1").arg(launcher.arguments().join(' ')));
+	if (!crashCatchingWarning.isEmpty()) {
+		LOG((crashCatchingWarning));
+	}
 
 	if (!LogsData) {
 		LOG(("FATAL: Could not open '%1' for writing log!"
@@ -412,7 +419,7 @@ void start() {
 	if (cWorkingDir() == psAppDataPath()) { // fix old "Telegram Win (Unofficial)" version
 		MoveOldDataFiles(psAppDataPathOld());
 	}
-#elif !defined Q_OS_MAC && !defined _DEBUG // fix first version
+#elif !defined Q_OS_MACOS && !defined _DEBUG // fix first version
 	MoveOldDataFiles(launcher.initialWorkingDir());
 #endif
 
@@ -479,19 +486,6 @@ bool instanceChecked() {
 	return true;
 }
 
-void multipleInstances() {
-	if (LogsInMemory) {
-		Assert(LogsInMemory != DeletedLogsInMemory);
-		delete LogsInMemory;
-	}
-	LogsInMemory = DeletedLogsInMemory;
-
-	if (Logs::DebugEnabled()) {
-		LOG(("WARNING: debug logs are not written in multiple instances mode!"));
-	}
-	LogsBeforeSingleInstanceChecked.clear();
-}
-
 void closeMain() {
 	LOG(("Explicitly closing main log and finishing crash handlers."));
 	if (LogsData) {
@@ -523,7 +517,7 @@ void writeDebug(const QString &v) {
 
 #ifdef Q_OS_WIN
 	//OutputDebugString(reinterpret_cast<const wchar_t *>(msg.utf16()));
-#elif defined Q_OS_MAC
+#elif defined Q_OS_MACOS
 	//objc_outputDebugString(msg);
 #elif defined _DEBUG
 	//std::cout << msg.toUtf8().constData();
@@ -552,6 +546,10 @@ void writeMtp(int32 dc, const QString &v) {
 			return base + "_download_update";
 		} else if (shift == MTP::kGroupCallStreamDcShift) {
 			return base + "_stream";
+		} else if (shift == MTP::kToncenterDcShift) {
+			return base + "_toncenter";
+		} else if (shift == MTP::kWalletShareDcShift) {
+			return base + "_wallet_share";
 		} else if (MTP::isDownloadDcId(dc)) {
 			const auto index = shift - MTP::kBaseDownloadDcShift;
 			return base + "_download" + QString::number(index);

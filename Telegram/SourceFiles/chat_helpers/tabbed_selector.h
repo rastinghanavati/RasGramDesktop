@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "api/api_common.h"
 #include "chat_helpers/compose/compose_features.h"
+#include "data/data_message_reaction_id.h"
 #include "ui/rp_widget.h"
 #include "ui/controls/swipe_handler_data.h"
 #include "ui/effects/animations.h"
@@ -74,7 +75,7 @@ struct PhotoChosen {
 };
 
 struct EmojiChosen {
-	EmojiPtr emoji;
+	EmojiPtr emoji = nullptr;
 	Ui::MessageSendingAnimationFrom messageSendingFrom;
 };
 
@@ -151,6 +152,12 @@ public:
 	[[nodiscard]] rpl::producer<PhotoChosen> photoChosen() const;
 	[[nodiscard]] rpl::producer<InlineChosen> inlineResultChosen() const;
 	[[nodiscard]] rpl::producer<> photoRequests() const;
+	[[nodiscard]] auto reactionRequests() const
+		-> rpl::producer<Data::ReactionId>;
+	[[nodiscard]] rpl::producer<> audioRequests() const;
+	[[nodiscard]] rpl::producer<> linkRequests() const;
+	[[nodiscard]] rpl::producer<> locationRequests() const;
+	[[nodiscard]] rpl::producer<> weatherRequests() const;
 
 	[[nodiscard]] rpl::producer<> cancelled() const;
 	[[nodiscard]] rpl::producer<> checkForHide() const;
@@ -165,7 +172,10 @@ public:
 	void provideRecentEmoji(
 		const std::vector<EmojiStatusId> &customRecentList);
 	void setMarkedCustomIds(const base::flat_set<DocumentId> &ids);
+	void setMarkedCustomPainter(
+		Fn<void(QPainter&, QRect, DocumentId)> painter);
 	void setSearchRightReserved(int value);
+	void refreshSearchColors();
 
 	void hideFinished();
 	void showStarted();
@@ -260,6 +270,7 @@ private:
 	bool hasMasksTab() const;
 	Tab createTab(SelectorTab type, int index);
 
+	void refreshRounding();
 	void paintSlideFrame(QPainter &p);
 	void paintBgRoundedPart(QPainter &p);
 	void paintContent(QPainter &p);

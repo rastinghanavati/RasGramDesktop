@@ -545,6 +545,7 @@ FileLoadTask::FileLoadTask(VoiceArgs &&args)
 , _duration(args.duration)
 , _waveform(std::move(args.waveform))
 , _type(args.video ? SendMediaType::Round : SendMediaType::Audio)
+, _videoSource(std::move(args.videoSource))
 , _caption(std::move(args.caption)) {
 }
 
@@ -762,15 +763,17 @@ void FileLoadTask::process(ProcessArgs &&args) {
 					Qt::IgnoreAspectRatio,
 					Qt::SmoothTransformation);
 			}
+			const auto gif = _animationAsGif && still->music.empty();
 			auto information = std::make_unique<
 				Ui::PreparedFileInformation>();
 			information->filemime = "video/mp4";
 			information->media = Ui::PreparedFileInformation::Video{
-				.isGifv = _animationAsGif,
+				.isGifv = gif,
 				.supportsStreaming = true,
+				.hasAudio = !still->music.empty(),
 				.duration = still->duration,
 				.thumbnail = std::move(preview),
-				.modifications = { .gif = _animationAsGif },
+				.modifications = { .gif = gif },
 			};
 			_information = std::move(information);
 			_content = QByteArray();
@@ -958,6 +961,27 @@ void FileLoadTask::process(ProcessArgs &&args) {
 			if (video->supportsStreaming) {
 				flags |= MTPDdocumentAttributeVideo::Flag::f_supports_streaming;
 			}
+			if (_videoSource) {
+				_result->videoSource = _videoSource;
+				const auto duration = Media::Encode::TranscodedDuration(
+					*_videoSource,
+					video->duration);
+				video->duration = duration;
+				const auto target = Media::Encode::TranscodedSize(
+					*_videoSource,
+					video->thumbnail.size());
+				if (!target.isEmpty()) {
+					coverWidth = target.width();
+					coverHeight = target.height();
+					if (!video->thumbnail.isNull()) {
+						video->thumbnail = base::take(video->thumbnail)
+							.scaled(
+								target,
+								Qt::IgnoreAspectRatio,
+								Qt::SmoothTransformation);
+					}
+				}
+			}
 			const auto realSeconds = video->duration / 1000.;
 			attributes.push_back(MTP_documentAttributeVideo(
 				MTP_flags(flags),
@@ -996,8 +1020,11 @@ void FileLoadTask::process(ProcessArgs &&args) {
 			auto coverHeight = video->thumbnail.height();
 			auto realSeconds = video->duration / 1000.;
 			const auto gif = video->modifications.gif && !_forceFile;
+			// WHY: a soundless source sent as a video gets a silent track
+			// added, so the server still has to be told it has no sound.
+			const auto silent = gif || !video->hasAudio;
+			// A GIF is sent as an animated mp4, so re-encode anything else.
 			const auto convertForGif = gif
-				&& video->isGifv
 				&& (filemime != u"video/mp4"_q);
 			const auto convert = (!Core::IsMimeSentAsVideo(filemime)
 					|| convertForGif)
@@ -1068,7 +1095,7 @@ void FileLoadTask::process(ProcessArgs &&args) {
 				if (video->supportsStreaming) {
 					flags |= MTPDdocumentAttributeVideo::Flag::f_supports_streaming;
 				}
-				if (gif) {
+				if (silent) {
 					flags |= MTPDdocumentAttributeVideo::Flag::f_nosound;
 				}
 				const auto startTs = _result->videoCoverOffset;

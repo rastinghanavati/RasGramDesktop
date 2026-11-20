@@ -55,6 +55,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history_item.h"
 #include "history/history_item_components.h"
 #include "history/history_item_helpers.h"
+#include "history/history_location_manager.h"
 #include "history/view/history_view_item_preview.h"
 #include "history/view/reactions/history_view_reactions_list.h"
 #include "info/bot/earn/info_bot_earn_widget.h"
@@ -934,9 +935,7 @@ void DeleteContactNote(
 	) | rpl::start_spawning(result->lifetime());
 
 	auto label = BirthdayLabelText(rpl::duplicate(birthday));
-	auto text = BirthdayValueText(
-		rpl::duplicate(birthday)
-	) | rpl::map(tr::marked);
+	auto text = BirthdayValueMarkedText(user, rpl::duplicate(birthday));
 
 	const auto giftIcon = Ui::CreateChild<Ui::RpWidget>(layout);
 	giftIcon->resize(st::birthdayTodayIcon.size());
@@ -989,7 +988,12 @@ void DeleteContactNote(
 	layout->add(object_ptr<Ui::FlatLabel>(
 		layout,
 		std::move(nonEmptyText),
-		st::birthdayLabeled));
+		st::birthdayLabeled,
+		st::defaultPopupMenu,
+		Ui::Text::MarkedContext{
+			.customEmojiFactory = user->owner().customEmojiManager().factory(
+				Data::CustomEmojiManager::SizeTag::Normal),
+		}));
 	layout->add(Ui::CreateSkipWidget(layout, st::infoLabelSkip));
 	layout->add(object_ptr<Ui::FlatLabel>(
 		layout,
@@ -1126,7 +1130,7 @@ rpl::producer<CreditsAmount> AddCurrencyAction(
 	const auto button = wrapButton->entity();
 	const auto name = Ui::CreateChild<Ui::FlatLabel>(button, st.rightLabel);
 	const auto icon = state->helper.paletteDependent({ .factory = [=] {
-		return Ui::Earn::IconCurrencyColored(
+		return Ui::Earn::IconCurrencyTwoTone(
 			st.rightLabel.style.font,
 			st.rightLabel.textFg->c);
 	}, .margin = st::channelEarnCurrencyCommonMargins });
@@ -1231,45 +1235,47 @@ rpl::producer<CreditsAmount> AddCreditsAction(
 	return state->balance.value();
 }
 
+using BlockPart = Ui::VerticalBlocks::Part;
+
 class DetailsFiller {
 public:
 	DetailsFiller(
 		not_null<Controller*> controller,
-		not_null<SectionStack*> stack,
+		Ui::VerticalBlocks blocks,
 		not_null<PeerData*> peer,
 		Origin origin);
 	DetailsFiller(
 		not_null<Controller*> controller,
-		not_null<SectionStack*> stack,
+		Ui::VerticalBlocks blocks,
 		not_null<Data::SavedSublist*> sublist);
 	DetailsFiller(
 		not_null<Controller*> controller,
-		not_null<SectionStack*> stack,
+		Ui::VerticalBlocks blocks,
 		not_null<Data::ForumTopic*> topic);
 
-	void buildSections();
+	void buildBlocks();
 
 private:
-	[[nodiscard]] Section makePersonalChannel(not_null<UserData*> user);
-	[[nodiscard]] Section makeInfo();
-	[[nodiscard]] Section makeAddAsContact(not_null<UserData*> user);
+	[[nodiscard]] BlockPart makePersonalChannel(not_null<UserData*> user);
+	[[nodiscard]] BlockPart makeInfo();
+	[[nodiscard]] BlockPart makeAddAsContact(not_null<UserData*> user);
 	void addBotVerify();
 	void addMainApp(not_null<UserData*> user);
-	[[nodiscard]] Section makeBotPermissions(not_null<UserData*> user);
+	[[nodiscard]] BlockPart makeBotPermissions(not_null<UserData*> user);
 	void addManagedBotFooter(not_null<UserData*> managerUser);
-	[[nodiscard]] Section makeReportOrDeleteReaction();
-	[[nodiscard]] Section makeViewChannel(not_null<ChannelData*> channel);
-	[[nodiscard]] Section makeCommunityLink(not_null<PeerData*> peer);
+	[[nodiscard]] BlockPart makeReportOrDeleteReaction();
+	[[nodiscard]] BlockPart makeViewChannel(not_null<ChannelData*> channel);
+	[[nodiscard]] BlockPart makeCommunityLink(not_null<PeerData*> peer);
 	void addCommunityHiddenNote();
-	[[nodiscard]] Section makeTopicsList(not_null<Data::Forum*> forum);
+	[[nodiscard]] BlockPart makeTopicsList(not_null<Data::Forum*> forum);
 
-	[[nodiscard]] Section makeDeleteReactionSection(GroupReactionOrigin data);
-	[[nodiscard]] Section makeReportReactionSection(
+	[[nodiscard]] BlockPart makeDeleteReactionSection(GroupReactionOrigin data);
+	[[nodiscard]] BlockPart makeReportReactionSection(
 		GroupReactionOrigin data,
 		bool ban);
 
 	not_null<Controller*> _controller;
-	not_null<SectionStack*> _stack;
+	Ui::VerticalBlocks _blocks;
 	not_null<PeerData*> _peer;
 	Data::ForumTopic *_topic = nullptr;
 	Data::SavedSublist *_sublist = nullptr;
@@ -1281,12 +1287,14 @@ class ActionsFiller {
 public:
 	ActionsFiller(
 		not_null<Controller*> controller,
-		not_null<Ui::RpWidget*> parent,
+		Ui::VerticalBlocks blocks,
 		not_null<PeerData*> peer);
 
-	object_ptr<Ui::RpWidget> fill();
+	void fill();
 
 private:
+	void startPart();
+	void startBlock();
 	void addAffiliateProgram(not_null<UserData*> user);
 	void addBalanceActions(not_null<UserData*> user);
 	void addInviteToGroupAction(not_null<UserData*> user);
@@ -1303,9 +1311,9 @@ private:
 	void fillChannelActions(not_null<ChannelData*> channel);
 
 	not_null<Controller*> _controller;
-	not_null<Ui::RpWidget*> _parent;
+	Ui::VerticalBlocks _blocks;
 	not_null<PeerData*> _peer;
-	object_ptr<Ui::VerticalLayout> _wrap = { nullptr };
+	Ui::VerticalLayout *_wrap = nullptr;
 
 };
 
@@ -1359,31 +1367,31 @@ void ReportReactionBox(
 
 DetailsFiller::DetailsFiller(
 	not_null<Controller*> controller,
-	not_null<SectionStack*> stack,
+	Ui::VerticalBlocks blocks,
 	not_null<PeerData*> peer,
 	Origin origin)
 : _controller(controller)
-, _stack(stack)
+, _blocks(blocks)
 , _peer(peer)
 , _origin(origin) {
 }
 
 DetailsFiller::DetailsFiller(
 	not_null<Controller*> controller,
-	not_null<SectionStack*> stack,
+	Ui::VerticalBlocks blocks,
 	not_null<Data::SavedSublist*> sublist)
 : _controller(controller)
-, _stack(stack)
+, _blocks(blocks)
 , _peer(sublist->sublistPeer())
 , _sublist(sublist) {
 }
 
 DetailsFiller::DetailsFiller(
 	not_null<Controller*> controller,
-	not_null<SectionStack*> stack,
+	Ui::VerticalBlocks blocks,
 	not_null<Data::ForumTopic*> topic)
 : _controller(controller)
-, _stack(stack)
+, _blocks(blocks)
 , _peer(topic->peer())
 , _topic(topic) {
 }
@@ -1473,8 +1481,8 @@ void AddRegistrationOrCreationButton(
 	});
 }
 
-Section DetailsFiller::makeInfo() {
-	const auto parent = _stack->layout();
+BlockPart DetailsFiller::makeInfo() {
+	const auto parent = _blocks.layout();
 	auto wrap = object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
 		parent,
 		object_ptr<Ui::VerticalLayout>(parent));
@@ -1509,9 +1517,9 @@ Section DetailsFiller::makeInfo() {
 				Qt::SkipEmptyParts).last();
 			if (!joinDate.isEmpty()) {
 				const auto weak = base::make_weak(window);
-				window->session().api().resolveJumpToDate(
+				window->session().api().resolveJumpToTime(
 					Dialogs::Key(peer->owner().history(peer)),
-					base::unixtime::parse(joinDate.toULongLong()).date(),
+					TimeId(joinDate.toULongLong()),
 					[=](not_null<PeerData*> p, MsgId m) {
 						const auto f = Window::SectionShow::Way::Forward;
 						if (const auto strong = weak.get()) {
@@ -1746,13 +1754,14 @@ Section DetailsFiller::makeInfo() {
 				user->session().supportHelper().infoTextValue(user));
 		}
 
+		const auto phoneLine = addInfoOneLine(
+			tr::lng_info_mobile_label(),
+			PhoneWithSpoilerValue(user, PhoneOrHiddenValue(user)),
+			tr::lng_profile_copy_phone(tr::now),
+			st::infoProfileLabeledPadding,
+			st::popupMenuWithIcons);
 		{
-			const auto phoneLabel = addInfoOneLine(
-				tr::lng_info_mobile_label(),
-				PhoneWithSpoilerValue(user, PhoneOrHiddenValue(user)),
-				tr::lng_profile_copy_phone(tr::now),
-				st::infoProfileLabeledPadding,
-				st::popupMenuWithIcons).text;
+			const auto phoneLabel = phoneLine.text;
 			const auto hook = [=](Ui::FlatLabel::ContextMenuRequest request) {
 				if (request.selection.empty()) {
 					const auto callback = [=] {
@@ -1814,16 +1823,33 @@ Section DetailsFiller::makeInfo() {
 			usernameLine.text->parentWidget(),
 			st::infoProfileLabeledButtonQr);
 		qrButton->setAccessibleName(tr::lng_group_invite_context_qr(tr::now));
-		UsernamesValue(_peer) | rpl::on_next([=](const auto &u) {
-			qrButton->setVisible(!u.empty());
-		}, qrButton->lifetime());
 		const auto rightSkip = st::infoProfileLabeledButtonQrRightSkip;
-		fitLabelToButton(qrButton, usernameLine.text, rightSkip);
-		fitLabelToButton(qrButton, usernameLine.subtext, rightSkip);
-		qrButton->setClickedCallback([=, show = controller->uiShow()] {
+		const auto showQr = [=, show = controller->uiShow()] {
 			Ui::DefaultShowFillPeerQrBoxCallback(show, user);
 			return false;
-		});
+		};
+		if (user->isSelf()) {
+			const auto phoneQr = Ui::CreateChild<Ui::IconButton>(
+				phoneLine.text->parentWidget(),
+				st::infoProfileLabeledButtonQr);
+			phoneQr->setAccessibleName(tr::lng_group_invite_context_qr(tr::now));
+			fitLabelToButton(phoneQr, phoneLine.text, rightSkip);
+			fitLabelToButton(phoneQr, phoneLine.subtext, rightSkip);
+			phoneQr->setClickedCallback(showQr);
+			UsernameValue(user, true) | rpl::on_next([=](
+					const TextWithEntities &username) {
+				const auto hasUsername = !username.text.isEmpty();
+				phoneQr->setVisible(!hasUsername);
+				qrButton->setVisible(hasUsername);
+			}, qrButton->lifetime());
+		} else {
+			UsernamesValue(_peer) | rpl::on_next([=](const auto &u) {
+				qrButton->setVisible(!u.empty());
+			}, qrButton->lifetime());
+		}
+		fitLabelToButton(qrButton, usernameLine.text, rightSkip);
+		fitLabelToButton(qrButton, usernameLine.subtext, rightSkip);
+		qrButton->setClickedCallback(showQr);
 
 		if (!user->isBot()) {
 			tracker.track(result->add(
@@ -2028,14 +2054,14 @@ Section DetailsFiller::makeInfo() {
 	raw->toggleOn(tracker.atLeastOneShownValue());
 	raw->finishAnimating();
 
-	return Section{
+	return BlockPart{
 		.widget = std::move(wrap),
 		.shown = raw->toggledValue(),
 	};
 }
 
-Section DetailsFiller::makePersonalChannel(not_null<UserData*> user) {
-	const auto parent = _stack->layout();
+BlockPart DetailsFiller::makePersonalChannel(not_null<UserData*> user) {
+	const auto parent = _blocks.layout();
 	auto result = object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
 		parent,
 		object_ptr<Ui::VerticalLayout>(parent));
@@ -2373,14 +2399,14 @@ Section DetailsFiller::makePersonalChannel(not_null<UserData*> user) {
 	}
 
 	const auto raw = result.data();
-	return Section{
+	return BlockPart{
 		.widget = std::move(result),
 		.shown = raw->toggledValue(),
 	};
 }
 
 void DetailsFiller::addMainApp(not_null<UserData*> user) {
-	const auto parent = _stack->layout();
+	const auto parent = _blocks.layout();
 	auto wrap = object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
 		parent,
 		object_ptr<Ui::VerticalLayout>(parent));
@@ -2422,25 +2448,31 @@ void DetailsFiller::addMainApp(not_null<UserData*> user) {
 		}
 		return text;
 	});
-	auto setup = [url](not_null<Ui::FlatLabel*> label) {
-		label->setClickHandlerFilter([=](const auto &...) {
-			UrlClickHandler::Open(url);
-			return false;
+	auto setup = [url, controller](not_null<Ui::FlatLabel*> label) {
+		label->setClickHandlerFilter([=](
+				const ClickHandlerPtr &link,
+				Qt::MouseButton) {
+			if (link && link->url() == url) {
+				HiddenUrlClickHandler::OpenTranslated(
+					tr::lng_mini_apps_tos_url,
+					QVariant::fromValue(ClickHandlerContext{
+						.sessionWindow = controller,
+					}));
+				return false;
+			}
+			return true;
 		});
 	};
 
-	_stack->add(Section{
-		.widget = std::move(wrap),
-		.shown = rpl::single(true),
+	_blocks.add(std::move(wrap));
+	_blocks.addAbout({
+		.text = std::move(textProducer),
+		.setup = std::move(setup),
 	});
-	_stack->addTextSeparator(
-		std::move(textProducer),
-		rpl::single(true),
-		std::move(setup));
 }
 
-Section DetailsFiller::makeBotPermissions(not_null<UserData*> user) {
-	const auto parent = _stack->layout();
+BlockPart DetailsFiller::makeBotPermissions(not_null<UserData*> user) {
+	const auto parent = _blocks.layout();
 	auto wrap = object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
 		parent,
 		object_ptr<Ui::VerticalLayout>(parent));
@@ -2471,14 +2503,14 @@ Section DetailsFiller::makeBotPermissions(not_null<UserData*> user) {
 		)).send();
 	}, emoji->lifetime());
 	AddSkip(inner);
-	return Section{
+	return BlockPart{
 		.widget = std::move(wrap),
 		.shown = rpl::single(true),
 	};
 }
 
-Section DetailsFiller::makeAddAsContact(not_null<UserData*> user) {
-	const auto parent = _stack->layout();
+BlockPart DetailsFiller::makeAddAsContact(not_null<UserData*> user) {
+	const auto parent = _blocks.layout();
 	auto wrap = object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
 		parent,
 		object_ptr<Ui::VerticalLayout>(parent));
@@ -2494,7 +2526,7 @@ Section DetailsFiller::makeAddAsContact(not_null<UserData*> user) {
 		nullptr,
 		nullptr);
 	raw->toggleOn(CanAddContactValue(user));
-	return Section{
+	return BlockPart{
 		.widget = std::move(wrap),
 		.shown = raw->toggledValue(),
 	};
@@ -2527,7 +2559,10 @@ void DetailsFiller::addBotVerify() {
 		return info ? info->description : TextWithEntities();
 	});
 
-	_stack->addTextSeparator(std::move(description), std::move(shown));
+	_blocks.addNote({
+		.text = std::move(description),
+		.shown = std::move(shown),
+	});
 }
 
 void DetailsFiller::addManagedBotFooter(not_null<UserData*> managerUser) {
@@ -2550,17 +2585,17 @@ void DetailsFiller::addManagedBotFooter(not_null<UserData*> managerUser) {
 			return false;
 		});
 	};
-	_stack->addTextSeparator(
-		std::move(text),
-		rpl::single(true),
-		std::move(setup));
+	_blocks.addNote({
+		.text = std::move(text),
+		.setup = std::move(setup),
+	});
 }
 
-Section DetailsFiller::makeReportOrDeleteReaction() {
+BlockPart DetailsFiller::makeReportOrDeleteReaction() {
 	if (_peer->isSelf()) {
-		return Section{ .widget = nullptr };
+		return BlockPart{ .widget = nullptr };
 	}
-	auto result = Section{ .widget = nullptr };
+	auto result = BlockPart{ .widget = nullptr };
 	v::match(_origin.data, [&](GroupReactionOrigin data) {
 		if (HistoryView::Reactions::CanModerateReactionByDeleteMessages(
 				data.group)) {
@@ -2577,8 +2612,8 @@ Section DetailsFiller::makeReportOrDeleteReaction() {
 	return result;
 }
 
-Section DetailsFiller::makeDeleteReactionSection(GroupReactionOrigin data) {
-	const auto parent = _stack->layout();
+BlockPart DetailsFiller::makeDeleteReactionSection(GroupReactionOrigin data) {
+	const auto parent = _blocks.layout();
 	const auto peer = _peer;
 	const auto controller = _controller->parentController();
 	auto wrap = object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
@@ -2601,16 +2636,16 @@ Section DetailsFiller::makeDeleteReactionSection(GroupReactionOrigin data) {
 		nullptr,
 		nullptr,
 		st::infoMainButtonAttention);
-	return Section{
+	return BlockPart{
 		.widget = std::move(wrap),
 		.shown = raw->toggledValue(),
 	};
 }
 
-Section DetailsFiller::makeReportReactionSection(
+BlockPart DetailsFiller::makeReportReactionSection(
 		GroupReactionOrigin data,
 		bool ban) {
-	const auto parent = _stack->layout();
+	const auto parent = _blocks.layout();
 	const auto peer = _peer;
 	const auto controller = _controller->parentController();
 	const auto forceHidden = std::make_shared<rpl::variable<bool>>(false);
@@ -2641,16 +2676,16 @@ Section DetailsFiller::makeReportReactionSection(
 		nullptr,
 		nullptr,
 		st::infoMainButtonAttention);
-	return Section{
+	return BlockPart{
 		.widget = std::move(wrap),
 		.shown = raw->toggledValue(),
 	};
 }
 
-Section DetailsFiller::makeViewChannel(not_null<ChannelData*> channel) {
+BlockPart DetailsFiller::makeViewChannel(not_null<ChannelData*> channel) {
 	using namespace rpl::mappers;
 
-	const auto parent = _stack->layout();
+	const auto parent = _blocks.layout();
 	auto wrap = object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
 		parent,
 		object_ptr<Ui::VerticalLayout>(parent));
@@ -2713,14 +2748,14 @@ Section DetailsFiller::makeViewChannel(not_null<ChannelData*> channel) {
 			&st::menuIconNewWindow);
 		state->menu->popup(QCursor::pos());
 	});
-	return Section{
+	return BlockPart{
 		.widget = std::move(wrap),
 		.shown = raw->toggledValue(),
 	};
 }
 
-Section DetailsFiller::makeCommunityLink(not_null<PeerData*> peer) {
-	const auto parent = _stack->layout();
+BlockPart DetailsFiller::makeCommunityLink(not_null<PeerData*> peer) {
+	const auto parent = _blocks.layout();
 	auto wrap = object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
 		parent,
 		object_ptr<Ui::VerticalLayout>(parent));
@@ -2824,7 +2859,7 @@ Section DetailsFiller::makeCommunityLink(not_null<PeerData*> peer) {
 	}
 
 	raw->toggle(true, anim::type::instant);
-	return Section{
+	return BlockPart{
 		.widget = std::move(wrap),
 		.shown = raw->toggledValue(),
 	};
@@ -2848,15 +2883,16 @@ void DetailsFiller::addCommunityHiddenNote() {
 		});
 	}) | rpl::flatten_latest() | rpl::distinct_until_changed();
 
-	_stack->addTextSeparator(
-		tr::lng_community_hidden_chat_about(tr::marked),
-		std::move(shown));
+	_blocks.addAbout({
+		.text = tr::lng_community_hidden_chat_about(tr::marked),
+		.shown = std::move(shown),
+	});
 }
 
-Section DetailsFiller::makeTopicsList(not_null<Data::Forum*> forum) {
+BlockPart DetailsFiller::makeTopicsList(not_null<Data::Forum*> forum) {
 	using namespace rpl::mappers;
 
-	const auto parent = _stack->layout();
+	const auto parent = _blocks.layout();
 	auto wrap = object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
 		parent,
 		object_ptr<Ui::VerticalLayout>(parent));
@@ -2879,41 +2915,39 @@ Section DetailsFiller::makeTopicsList(not_null<Data::Forum*> forum) {
 	raw->toggleOn(rpl::duplicate(showTopicsVisible));
 	AddMainButton(
 		raw->entity(),
-		(forum->peer()->isBot()
-			? tr::lng_bot_show_threads_list()
-			: tr::lng_forum_show_topics_list()),
+		tr::lng_forum_show_topics_list(),
 		std::move(showTopicsVisible),
 		callback,
 		nullptr,
 		nullptr);
-	return Section{
+	return BlockPart{
 		.widget = std::move(wrap),
 		.shown = raw->toggledValue(),
 	};
 }
 
-void DetailsFiller::buildSections() {
+void DetailsFiller::buildBlocks() {
 	Expects(!_topic || !_topic->creating());
 
 	if (const auto user = _sublist ? nullptr : _peer->asUser()) {
-		_stack->add(makePersonalChannel(user));
-		_stack->addPlainSeparator();
+		_blocks.add(makePersonalChannel(user));
+		_blocks.addSeparator();
 	}
 	if (Data::PeerLinkedCommunityId(_peer)) {
-		_stack->add(makeCommunityLink(_peer));
+		_blocks.add(makeCommunityLink(_peer));
 		addCommunityHiddenNote();
-		_stack->addPlainSeparator();
 	}
-	_stack->add(makeInfo());
+	_blocks.add(makeInfo());
 	if (const auto user = _peer->asUser()) {
-		_stack->add(makeAddAsContact(user));
+		_blocks.add(makeAddAsContact(user));
 		addBotVerify();
 		if (const auto info = user->botInfo.get()) {
 			if (info->hasMainApp) {
 				addMainApp(user);
 			}
 			if (info->canManageEmojiStatus) {
-				_stack->add(makeBotPermissions(user));
+				_blocks.addSeparator();
+				_blocks.add(makeBotPermissions(user));
 			}
 			if (const auto id = user->botManagerId()) {
 				if (const auto mgr = user->owner().userLoaded(id)) {
@@ -2924,27 +2958,36 @@ void DetailsFiller::buildSections() {
 		if (!_sublist) {
 			auto reactionSection = makeReportOrDeleteReaction();
 			if (reactionSection.widget) {
-				_stack->add(std::move(reactionSection));
+				_blocks.add(std::move(reactionSection));
 			}
 		}
 	} else if (const auto channel = _peer->asChannel()) {
 		addBotVerify();
 		if (!channel->isMegagroup()) {
-			_stack->add(makeViewChannel(channel));
+			_blocks.add(makeViewChannel(channel));
 		}
 		if (const auto forum = channel->forum()) {
-			_stack->add(makeTopicsList(forum));
+			_blocks.add(makeTopicsList(forum));
 		}
 	}
 }
 
 ActionsFiller::ActionsFiller(
 	not_null<Controller*> controller,
-	not_null<Ui::RpWidget*> parent,
+	Ui::VerticalBlocks blocks,
 	not_null<PeerData*> peer)
 : _controller(controller)
-, _parent(parent)
+, _blocks(blocks)
 , _peer(peer) {
+}
+
+void ActionsFiller::startPart() {
+	_wrap = _blocks.add(object_ptr<Ui::VerticalLayout>(_blocks.layout()));
+}
+
+void ActionsFiller::startBlock() {
+	_blocks.addSeparator();
+	startPart();
 }
 
 void ActionsFiller::addAffiliateProgram(not_null<UserData*> user) {
@@ -2952,10 +2995,12 @@ void ActionsFiller::addAffiliateProgram(not_null<UserData*> user) {
 		return;
 	}
 
-	const auto wrap = _wrap->add(
+	const auto parent = _blocks.layout();
+	_blocks.addSeparator();
+	const auto wrap = _blocks.add(
 		object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
-			_wrap.data(),
-			object_ptr<Ui::VerticalLayout>(_wrap.data())));
+			parent,
+			object_ptr<Ui::VerticalLayout>(parent)));
 	const auto inner = wrap->entity();
 	auto program = user->session().changes().peerFlagsValue(
 		user,
@@ -3003,16 +3048,6 @@ void ActionsFiller::addAffiliateProgram(not_null<UserData*> user) {
 		recipients->open,
 		st::infoSharedMediaCountButton,
 		{ .icon = &st::menuIconSharing }));
-	Ui::AddSkip(inner);
-	Ui::AddDividerText(
-		inner,
-		tr::lng_manage_peer_bot_star_ref_about(
-			lt_bot,
-			rpl::single(TextWithEntities{ user->name() }),
-			lt_amount,
-			rpl::duplicate(commission) | rpl::map(tr::marked),
-			tr::rich));
-	Ui::AddSkip(inner);
 
 	wrap->toggleOn(std::move(
 		program
@@ -3020,20 +3055,28 @@ void ActionsFiller::addAffiliateProgram(not_null<UserData*> user) {
 		return program.commission > 0;
 	}));
 	wrap->finishAnimating();
+
+	_blocks.addAbout({
+		.text = tr::lng_manage_peer_bot_star_ref_about(
+			lt_bot,
+			rpl::single(TextWithEntities{ user->name() }),
+			lt_amount,
+			std::move(commission) | rpl::map(tr::marked),
+			tr::rich),
+	});
 }
 
 void ActionsFiller::addBalanceActions(not_null<UserData*> user) {
-	const auto wrap = _wrap->add(
+	const auto parent = _blocks.layout();
+	_blocks.addSeparator();
+	const auto wrap = _blocks.add(
 		object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
-			_wrap.data(),
-			object_ptr<Ui::VerticalLayout>(_wrap.data())));
+			parent,
+			object_ptr<Ui::VerticalLayout>(parent)));
 	const auto inner = wrap->entity();
 	Ui::AddSubsectionTitle(inner, tr::lng_manage_peer_bot_balance());
 	auto currencyBalance = AddCurrencyAction(user, inner, _controller);
 	auto creditsBalance = AddCreditsAction(user, inner, _controller);
-	Ui::AddSkip(inner);
-	Ui::AddDivider(inner);
-	Ui::AddSkip(inner);
 	wrap->toggleOn(
 		rpl::combine(
 			std::move(currencyBalance),
@@ -3053,17 +3096,10 @@ void ActionsFiller::addInviteToGroupAction(not_null<UserData*> user) {
 		InviteToChatButton(user) | rpl::map(notEmpty),
 		[=] { AddBotToGroupBoxController::Start(controller, user); },
 		&st::infoIconAddMember);
-	const auto about = _wrap->add(
-		object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
-			_wrap.data(),
-			object_ptr<Ui::VerticalLayout>(_wrap.data())));
-	about->toggleOn(InviteToChatAbout(user) | rpl::map(notEmpty));
-	Ui::AddSkip(about->entity());
-	Ui::AddDividerText(
-		about->entity(),
-		InviteToChatAbout(user) | rpl::filter(notEmpty));
-	Ui::AddSkip(about->entity());
-	about->finishAnimating();
+	_blocks.addNote({
+		.text = InviteToChatAbout(user) | rpl::map(tr::marked),
+	});
+	startPart();
 }
 
 void ActionsFiller::addShareContactAction(not_null<UserData*> user) {
@@ -3115,10 +3151,6 @@ void ActionsFiller::addFastButtonsMode(not_null<UserData*> user) {
 		st::infoIconMediaBot,
 		st::infoSharedMediaButtonIconPosition);
 
-	AddSkip(_wrap);
-	AddDivider(_wrap);
-	AddSkip(_wrap);
-
 	button->toggleOn(bots->enabledValue(user));
 	button->toggledValue(
 	) | rpl::filter([=](bool value) {
@@ -3126,6 +3158,8 @@ void ActionsFiller::addFastButtonsMode(not_null<UserData*> user) {
 	}) | rpl::on_next([=](bool value) {
 		bots->setEnabled(user, value);
 	}, button->lifetime());
+
+	startBlock();
 }
 
 void ActionsFiller::addBotCommandActions(not_null<UserData*> user) {
@@ -3206,7 +3240,10 @@ void ActionsFiller::addBotCommandActions(not_null<UserData*> user) {
 			}
 		}
 		if (!sendBotCommand(u"privacy"_q)) {
-			openUrl(tr::lng_profile_bot_privacy_url(tr::now));
+			HiddenUrlClickHandler::OpenTranslatedWithIv(
+				&user->session(),
+				tr::lng_profile_bot_privacy_url,
+				makeOtherContext());
 		}
 	};
 	AddActionButton(
@@ -3327,6 +3364,9 @@ void ActionsFiller::fillUserActions(not_null<UserData*> user) {
 	if (user->isBot()) {
 		addAffiliateProgram(user);
 		addBalanceActions(user);
+	}
+	startBlock();
+	if (user->isBot()) {
 		addInviteToGroupAction(user);
 	}
 	addShareContactAction(user);
@@ -3346,8 +3386,7 @@ void ActionsFiller::fillUserActions(not_null<UserData*> user) {
 
 void ActionsFiller::fillChannelActions(
 		not_null<ChannelData*> channel) {
-	using namespace rpl::mappers;
-
+	startBlock();
 	addJoinChannelAction(channel);
 	addLeaveChannelAction(channel);
 	if (!channel->amCreator()) {
@@ -3355,25 +3394,14 @@ void ActionsFiller::fillChannelActions(
 	}
 }
 
-object_ptr<Ui::RpWidget> ActionsFiller::fill() {
-	auto wrapResult = [=](auto &&callback) {
-		_wrap = object_ptr<Ui::VerticalLayout>(_parent);
-		callback();
-		return std::move(_wrap);
-	};
-	if (auto user = _peer->asUser()) {
-		return wrapResult([=] {
-			fillUserActions(user);
-		});
-	} else if (auto channel = _peer->asChannel()) {
-		if (channel->isMegagroup()) {
-			return { nullptr };
-		}
-		return wrapResult([=] {
+void ActionsFiller::fill() {
+	if (const auto user = _peer->asUser()) {
+		fillUserActions(user);
+	} else if (const auto channel = _peer->asChannel()) {
+		if (!channel->isMegagroup()) {
 			fillChannelActions(channel);
-		});
+		}
 	}
-	return { nullptr };
 }
 
 } // namespace
@@ -3381,12 +3409,12 @@ object_ptr<Ui::RpWidget> ActionsFiller::fill() {
 const char kOptionShowPeerIdBelowAbout[] = "show-peer-id-below-about";
 const char kOptionShowChannelJoinedBelowAbout[] = "show-channel-joined-below-about";
 
-object_ptr<Ui::RpWidget> SetupActions(
+void AddActionsBlocks(
+		Ui::VerticalBlocks blocks,
 		not_null<Controller*> controller,
-		not_null<Ui::RpWidget*> parent,
 		not_null<PeerData*> peer) {
-	ActionsFiller filler(controller, parent, peer);
-	return filler.fill();
+	ActionsFiller filler(controller, blocks, peer);
+	filler.fill();
 }
 
 void SetupAddChannelMember(
@@ -3609,43 +3637,23 @@ object_ptr<Ui::RpWidget> SetupChannelMembersAndManage(
 	return result;
 }
 
-void BuildProfileDetailsSections(
-		SectionStack &stack,
+void AddDetailsBlocks(
+		Ui::VerticalBlocks blocks,
 		not_null<Controller*> controller,
 		not_null<PeerData*> peer,
 		Data::ForumTopic *topic,
 		Data::SavedSublist *sublist,
 		Origin origin) {
 	if (topic) {
-		DetailsFiller filler(controller, &stack, topic);
-		filler.buildSections();
+		DetailsFiller filler(controller, blocks, topic);
+		filler.buildBlocks();
 	} else if (sublist) {
-		DetailsFiller filler(controller, &stack, sublist);
-		filler.buildSections();
+		DetailsFiller filler(controller, blocks, sublist);
+		filler.buildBlocks();
 	} else {
-		DetailsFiller filler(controller, &stack, peer, origin);
-		filler.buildSections();
+		DetailsFiller filler(controller, blocks, peer, origin);
+		filler.buildBlocks();
 	}
-}
-
-void AddDetails(
-		not_null<Ui::VerticalLayout*> container,
-		not_null<Controller*> controller,
-		not_null<PeerData*> peer,
-		Data::ForumTopic *topic,
-		Data::SavedSublist *sublist,
-		Origin origin) {
-	auto layout = object_ptr<Ui::VerticalLayout>(container);
-	auto stack = SectionStack(layout.data());
-	BuildProfileDetailsSections(
-		stack,
-		controller,
-		peer,
-		topic,
-		sublist,
-		origin);
-	stack.finalize();
-	container->add(std::move(layout));
 }
 
 } // namespace Profile

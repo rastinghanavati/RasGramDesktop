@@ -466,6 +466,11 @@ void Uploader::runTranscode(FullMsgId itemId) {
 							return !std::get_if<QImage>(&layer);
 						}),
 					end(fallback.overlay));
+				using StillSource = Media::Encode::StillSource;
+				if (const auto still = std::get_if<StillSource>(
+						&fallback.source)) {
+					still->music.clear();
+				}
 				result = Media::Encode::Run(std::move(fallback), nullptr);
 			}
 			bytes = std::move(result.bytes);
@@ -644,7 +649,7 @@ void Uploader::stopSessions() {
 		_stopSessionsTimer.callOnce(kKillSessionTimeout);
 	} else {
 		for (auto i = 0; i != int(_sentPerDcIndex.size()); ++i) {
-			_api->instance().stopSession(MTP::uploadDcId(i));
+			_api->instance().killSessionsByShift(MTP::kBaseUploadDcShift + i);
 		}
 		_sentPerDcIndex.clear();
 		_dcIndicesWithFastRequests.clear();
@@ -857,6 +862,7 @@ auto Uploader::sendSlicedPart(not_null<Entry*> entry, uchar dcIndex)
 	), {
 		.itemId = itemId,
 		.bytes = partBytes,
+		.part = index,
 		.dcIndex = dcIndex,
 	});
 	return SendResult::Success;
@@ -1087,7 +1093,7 @@ void Uploader::removeDcIndex() {
 	Assert(_sentPerDcIndex.back() == 0);
 	_sentPerDcIndex.pop_back();
 	_dcIndicesWithFastRequests.remove(dcIndex);
-	_api->instance().stopSession(MTP::uploadDcId(dcIndex));
+	_api->instance().killSessionsByShift(MTP::kBaseUploadDcShift + dcIndex);
 	DEBUG_LOG(("Uploader: Removed dc index %1.").arg(dcIndex));
 }
 

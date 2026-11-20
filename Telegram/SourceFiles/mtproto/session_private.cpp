@@ -186,11 +186,22 @@ SessionPrivate::SessionPrivate(
 }
 
 SessionPrivate::~SessionPrivate() {
+	const auto hadKeyCreator = (_keyCreator != nullptr);
 	releaseKeyCreationOnFail();
 	doDisconnect();
 
 	Expects(!_connection);
 	Expects(_testConnections.empty());
+
+	if (hadKeyCreator) {
+		const auto bareDcId = BareDcId(_shiftedDcId);
+		const auto dcId = isTemporaryDcId(bareDcId)
+			? getRealIdFromTemporaryDcId(bareDcId)
+			: bareDcId;
+		InvokeQueued(_instance, [instance = _instance, dcId] {
+			instance->dcTemporaryKeyChanged(dcId);
+		});
+	}
 }
 
 void SessionPrivate::appendTestConnection(
@@ -237,17 +248,9 @@ void SessionPrivate::appendTestConnection(
 		});
 	});
 
-	const auto protocolForFiles = isMediaClusterDcId(_shiftedDcId)
-		//|| isUploadDcId(_shiftedDcId)
-		|| (_realDcType == DcType::Cdn);
 	const auto protocolDcId = getProtocolDcId();
 	InvokeQueued(_testConnections.back().data, [=] {
-		weak->connectToServer(
-			ip,
-			port,
-			protocolSecret,
-			protocolDcId,
-			protocolForFiles);
+		weak->connectToServer(ip, port, protocolSecret, protocolDcId);
 	});
 }
 
@@ -346,10 +349,6 @@ void SessionPrivate::destroyAllConnections() {
 
 void SessionPrivate::cdnConfigChanged() {
 	connectToServer(true);
-}
-
-int32 SessionPrivate::getShiftedDcId() const {
-	return _shiftedDcId;
 }
 
 void SessionPrivate::dcOptionsChanged() {
@@ -1338,7 +1337,8 @@ void SessionPrivate::handleReceived() {
 			return restart();
 		}
 
-		if ((messageLength > kMaxMessageLength)
+		if ((messageLength < kIntSize)
+			|| (messageLength > kMaxMessageLength)
 			|| (messageLength & 0x03)
 			|| (paddingSize < kMinPaddingSize)
 			|| (paddingSize > kMaxPaddingSize)) {
@@ -1851,7 +1851,7 @@ SessionPrivate::HandleResult SessionPrivate::handleOneReceived(
 	} return HandleResult::Success;
 
 	case mtpc_rpc_result: {
-		if (from + 3 > end) {
+		if (end - from < 4) {
 			return HandleResult::ParseError;
 		}
 		auto response = mtpBuffer();
@@ -2113,7 +2113,6 @@ mtpBuffer SessionPrivate::ungzip(
 		const auto res = inflate(&stream, Z_NO_FLUSH);
 		if (res != Z_OK && res != Z_STREAM_END) {
 			LOG(("RPC Error: could not unpack gziped data, code: %1").arg(res));
-			DEBUG_LOG(("RPC Error: bad gzip: %1").arg(Logs::mb(packed.v.constData(), packedLen).str()));
 			return {};
 		} else if (res == Z_STREAM_END) {
 			break;
@@ -2126,7 +2125,6 @@ mtpBuffer SessionPrivate::ungzip(
 		const auto badSize = result.size() * sizeof(mtpPrime)
 			- stream.avail_out;
 		LOG(("RPC Error: bad length of unpacked data %1").arg(badSize));
-		DEBUG_LOG(("RPC Error: bad unpacked data %1").arg(Logs::mb(result.data(), badSize).str()));
 		return {};
 	}
 	result.resize(result.size() - (stream.avail_out >> 2));
@@ -2518,13 +2516,12 @@ void SessionPrivate::applyAuthKey(AuthKeyPtr &&encryptionKey) {
 		LOG(("MTP Error: No key %1 in updateAuthKey() for destroying."
 			).arg(_shiftedDcId));
 		_instance->keyWasPossiblyDestroyed(_shiftedDcId);
-	} else if (noMediaKeyWithExistingRegularKey()) {
-		DEBUG_LOG(("AuthKey Info: No key in updateAuthKey() for media, "
-			"but someone has created regular, trying to acquire."));
+	} else if (!_keyCreator) {
 		const auto dcType = tryAcquireKeyCreation();
 		if (_keyCreator && dcType != _currentDcType) {
 			DEBUG_LOG(("AuthKey Info: "
 				"Dc type changed for creation, restarting."));
+			_currentDcType = dcType;
 			restart();
 			return;
 		}
@@ -2540,12 +2537,6 @@ void SessionPrivate::applyAuthKey(AuthKeyPtr &&encryptionKey) {
 		DEBUG_LOG(("AuthKey Info: No key in updateAuthKey(), "
 			"but someone is creating already, waiting."));
 	}
-}
-
-bool SessionPrivate::noMediaKeyWithExistingRegularKey() const {
-	return (TemporaryKeyTypeByDcType(_currentDcType)
-			== TemporaryKeyType::MediaCluster)
-		&& _sessionData->getTemporaryKey(TemporaryKeyType::Regular);
 }
 
 bool SessionPrivate::destroyOldEnoughPersistentKey() {
@@ -2568,7 +2559,10 @@ bool SessionPrivate::destroyOldEnoughPersistentKey() {
 }
 
 DcType SessionPrivate::tryAcquireKeyCreation() {
-	if (_keyCreator) {
+	if (_keyCreator
+		|| (_keyId
+			&& _realDcType == DcType::MediaCluster
+			&& _currentDcType == DcType::Regular)) {
 		return _currentDcType;
 	} else if (_instance->isKeysDestroyer()) {
 		return _realDcType;
@@ -2670,9 +2664,13 @@ void SessionPrivate::onError(
 		LOG(("Protocol Error: -429 flood code returned!"));
 	} else if (errorCode == -444) {
 		LOG(("Protocol Error: -444 bad dc_id code returned!"));
-		InvokeQueued(_instance, [instance = _instance] {
-			instance->badConfigurationError();
-		});
+		const auto &proxy = _options->proxy;
+		if (proxy.type == ProxyData::Type::Mtproto
+			|| proxy.type == ProxyData::Type::Web) {
+			InvokeQueued(_instance, [instance = _instance, proxy] {
+				instance->badConfigurationError(proxy);
+			});
+		}
 	}
 	removeTestConnection(connection);
 

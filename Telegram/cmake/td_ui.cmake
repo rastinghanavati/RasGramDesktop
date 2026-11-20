@@ -43,6 +43,7 @@ set(style_files
     boxes/share_box.style
     boxes/stickers_box.style
     boxes/url_auth_box_content.style
+    boxes/keys_legend.style
     info/community_requests/info_community_requests_widget.style
     settings/sections/settings_notifications.style
     ui/boxes/calendar_box.style
@@ -52,6 +53,7 @@ set(style_files
     ui/controls/labeled_emoji_tabs.style
     ui/widgets/color_editor.style
     ui/widgets/marquee_label.style
+    ui/widgets/passcode_strength_meter.style
     window/window_lock_widgets.style
     boxes/compose_ai_box.style
     boxes/connection_box.style
@@ -86,6 +88,8 @@ set(style_files
     ui/controls/filter_link_header.style
     media/view/media_view.style
     overview/overview.style
+    wallet/wallet.style
+    tgw/tgw.style
     window/window.style
     window/window_main_menu.style
     editor/editor.style
@@ -106,10 +110,22 @@ nice_target_sources(td_ui ${src_loc}
 PRIVATE
     ${style_files}
 
+    boxes/peers/bot_info_field.cpp
+    boxes/peers/bot_info_field.h
+    boxes/peers/bot_info_file.cpp
+    boxes/peers/bot_info_file.h
+    boxes/peers/bot_info_language_button.cpp
+    boxes/peers/bot_info_language_button.h
+    boxes/peers/bot_info_transfer.cpp
+    boxes/peers/bot_info_transfer.h
+    boxes/peers/edit_bot_info_box_content.cpp
+    boxes/peers/edit_bot_info_box_content.h
     boxes/peers/edit_peer_history_visibility_box.cpp
     boxes/peers/edit_peer_history_visibility_box.h
     boxes/peers/toggle_topics_box.cpp
     boxes/peers/toggle_topics_box.h
+    boxes/peers/translate_bot_info_box.cpp
+    boxes/peers/translate_bot_info_box.h
 
     boxes/url_auth_box_content.cpp
     boxes/url_auth_box_content.h
@@ -147,6 +163,10 @@ PRIVATE
     data/data_authorization.h
     data/data_birthday.cpp
     data/data_birthday.h
+    data/data_bot_info_draft.cpp
+    data/data_bot_info_draft.h
+    data/data_bot_info_localization.cpp
+    data/data_bot_info_localization.h
     data/data_channel_earn.h
     data/data_credits.h
     data/data_credits_earn.h
@@ -165,6 +185,8 @@ PRIVATE
     dialogs/ui/chat_search_empty.h
     dialogs/ui/chat_search_in.cpp
     dialogs/ui/chat_search_in.h
+    dialogs/ui/dialogs_bottom_button.cpp
+    dialogs/ui/dialogs_bottom_button.h
     dialogs/ui/dialogs_pill.cpp
     dialogs/ui/dialogs_pill.h
     dialogs/ui/dialogs_quick_action_context.h
@@ -182,13 +204,31 @@ PRIVATE
 
     editor/controllers/undo_controller.cpp
     editor/controllers/undo_controller.h
+    editor/editor_audio_disc_button.cpp
+    editor/editor_audio_disc_button.h
+    editor/editor_video_layer_button.cpp
+    editor/editor_video_layer_button.h
+    editor/editor_audio_menu.cpp
+    editor/editor_audio_menu.h
     editor/editor_crop.cpp
     editor/editor_crop.h
+    editor/editor_enhance.cpp
+    editor/editor_enhance.h
+    editor/editor_enhance_indicator.cpp
+    editor/editor_enhance_indicator.h
+    editor/editor_keys_legend.cpp
+    editor/editor_keys_legend.h
+    editor/editor_link_pill.cpp
+    editor/editor_link_pill.h
     editor/editor_layer_widget.cpp
     editor/editor_layer_widget.h
+    editor/editor_trim_timeline.cpp
+    editor/editor_trim_timeline.h
     editor/photo_editor_common.cpp
     editor/photo_editor_common.h
     editor/photo_editor_inner_common.h
+    editor/editor_round_record_button.cpp
+    editor/editor_round_record_button.h
     editor/scene/scene.cpp
     editor/scene/scene.h
     editor/scene/scene_item_animated.cpp
@@ -201,16 +241,27 @@ PRIVATE
     editor/scene/scene_item_image.h
     editor/scene/scene_item_line.cpp
     editor/scene/scene_item_line.h
+    editor/scene/scene_item_link.cpp
+    editor/scene/scene_item_link.h
+    editor/scene/scene_item_location.cpp
+    editor/scene/scene_item_location.h
     editor/scene/scene_item_shape.cpp
     editor/scene/scene_item_shape.h
     editor/scene/scene_item_text.cpp
     editor/scene/scene_item_text.h
     editor/scene/scene_item_video.cpp
     editor/scene/scene_item_video.h
+    editor/scene/scene_item_weather.cpp
+    editor/scene/scene_item_weather.h
     editor/scene/scene_emoji_document.cpp
     editor/scene/scene_emoji_document.h
     editor/scene/scene_text_editing.cpp
     editor/scene/scene_text_editing.h
+
+    editor/video/video_clip.cpp
+    editor/video/video_clip.h
+    editor/video/video_editor_common.cpp
+    editor/video/video_editor_common.h
 
     ui/boxes/about_cocoon_box.h
     ui/boxes/about_cocoon_box.cpp
@@ -277,7 +328,16 @@ PRIVATE
     media/player/media_player_dropdown.cpp
     media/player/media_player_dropdown.h
 
+    media/media_audio_waveform.cpp
+    media/media_audio_waveform.h
     media/media_common.h
+    media/media_video_canvas.cpp
+    media/media_video_canvas.h
+    media/media_video_encode.cpp
+    media/media_video_encode.h
+
+    media/stories/media_stories_discard_prompt.cpp
+    media/stories/media_stories_discard_prompt.h
 
     menu/gift_resale_filter.cpp
     menu/gift_resale_filter.h
@@ -384,8 +444,6 @@ PRIVATE
     statistics/widgets/point_details_widget.cpp
     statistics/widgets/point_details_widget.h
 
-    ui/boxes/auto_delete_settings.cpp
-    ui/boxes/auto_delete_settings.h
     ui/boxes/boost_box.cpp
     ui/boxes/boost_box.h
     ui/boxes/calendar_box.cpp
@@ -458,6 +516,8 @@ PRIVATE
     ui/chat/chat_style_radius.h
     ui/chat/chat_theme.cpp
     ui/chat/chat_theme.h
+    ui/chat/chat_theme_readability.cpp
+    ui/chat/chat_theme_readability.h
     ui/chat/chats_filter_tag.cpp
     ui/chat/chats_filter_tag.h
     ui/chat/forward_options_box.cpp
@@ -480,6 +540,8 @@ PRIVATE
     ui/chat/torn_edge.h
     ui/chat/unsupported_notice.cpp
     ui/chat/unsupported_notice.h
+    ui/controls/button_busy.cpp
+    ui/controls/button_busy.h
     ui/controls/button_context_menu.cpp
     ui/controls/button_context_menu.h
     ui/controls/button_labels.cpp
@@ -521,6 +583,8 @@ PRIVATE
     ui/controls/send_as_button.h
     ui/controls/send_button.cpp
     ui/controls/send_button.h
+    ui/controls/slider_tick_labels.cpp
+    ui/controls/slider_tick_labels.h
     ui/controls/stars_rating.cpp
     ui/controls/stars_rating.h
     ui/controls/subsection_tabs_slider.cpp
@@ -534,6 +598,8 @@ PRIVATE
     ui/controls/swipe_handler_data.h
     ui/controls/tabbed_search.cpp
     ui/controls/tabbed_search.h
+    ui/controls/text_copied_toast.cpp
+    ui/controls/text_copied_toast.h
     ui/controls/title_sub_widget.cpp
     ui/controls/title_sub_widget.h
     ui/controls/ton_common.cpp
@@ -553,6 +619,8 @@ PRIVATE
     ui/effects/fireworks_animation.h
     ui/effects/glare.cpp
     ui/effects/glare.h
+    ui/effects/layer_backdrop.cpp
+    ui/effects/layer_backdrop.h
     ui/effects/loading_element.cpp
     ui/effects/loading_element.h
     ui/effects/ministar_particles.cpp
@@ -603,6 +671,8 @@ PRIVATE
     ui/effects/shake_animation.h
     ui/effects/snowflakes.cpp
     ui/effects/snowflakes.h
+    ui/effects/star_burst.cpp
+    ui/effects/star_burst.h
     ui/effects/toggle_arrow.cpp
     ui/effects/toggle_arrow.h
     ui/effects/ttl_icon.cpp
@@ -643,6 +713,8 @@ PRIVATE
     ui/widgets/continuous_sliders.h
     ui/widgets/discrete_sliders.cpp
     ui/widgets/discrete_sliders.h
+    ui/widgets/glare_tooltip.cpp
+    ui/widgets/glare_tooltip.h
     ui/widgets/gradient_round_button.cpp
     ui/widgets/gradient_round_button.h
     ui/widgets/horizontal_fit_container.cpp
@@ -655,6 +727,8 @@ PRIVATE
     ui/widgets/middle_click_autoscroll.h
     ui/widgets/multi_select.cpp
     ui/widgets/multi_select.h
+    ui/widgets/passcode_strength_meter.cpp
+    ui/widgets/passcode_strength_meter.h
     ui/widgets/selecting_scroll.cpp
     ui/widgets/selecting_scroll.h
     ui/widgets/sent_code_field.cpp
@@ -681,6 +755,10 @@ PRIVATE
     ui/grouped_layout_geometry.h
     ui/new_badges.cpp
     ui/new_badges.h
+    ui/passcode_strength.cpp
+    ui/passcode_strength.h
+    ui/passcode_strength_translit.cpp
+    ui/passcode_strength_translit.h
     ui/peer/color_sample.cpp
     ui/peer/color_sample.h
     ui/power_saving.cpp
@@ -695,6 +773,17 @@ PRIVATE
     ui/userpic_view.h
     ui/webview_helpers.cpp
     ui/webview_helpers.h
+    ui/window_palette.cpp
+    ui/window_palette.h
+
+    wallet/wallet_card_angle.cpp
+    wallet/wallet_card_angle.h
+    wallet/wallet_card_gradient.cpp
+    wallet/wallet_card_gradient.h
+    wallet/wallet_card_tint.cpp
+    wallet/wallet_card_tint.h
+    wallet/wallet_sending_effects.cpp
+    wallet/wallet_sending_effects.h
 
     window/window_slide_animation.cpp
     window/window_slide_animation.h
@@ -744,6 +833,7 @@ PRIVATE
     desktop-app::lib_webrtc
     desktop-app::lib_spellcheck
     desktop-app::lib_stripe
+    desktop-app::lib_zxcvbn
     desktop-app::external_kcoreaddons
     desktop-app::external_minizip
     desktop-app::external_webrtc

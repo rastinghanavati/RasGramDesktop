@@ -57,6 +57,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/mtproto_dc_options.h"
 #include "window/window_session_controller.h"
 #include "window/window_controller.h"
+#include "window/window_logout_box.h"
 #include "window/window_peer_menu.h"
 #include "apiwrap.h"
 #include "api/api_peer_photo.h"
@@ -67,7 +68,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/unixtime.h"
 #include "base/random.h"
 #include "styles/style_chat.h" // popupMenuExpandedSeparator
-#include "styles/style_layers.h"
 #include "styles/style_settings.h"
 #include "styles/style_menu_icons.h"
 #include "styles/style_window.h"
@@ -551,31 +551,7 @@ void SetupChatAutomation(
 		controller->showSettings(Settings::ChatbotsId());
 	});
 
-	{
-		const auto badge = Ui::NewBadge::CreateNewBadge(
-			button,
-			tr::lng_premium_summary_new_badge()).get();
-		rpl::combine(
-			std::move(title),
-			button->widthValue()
-		) | rpl::on_next([=, &st](
-				const QString &text,
-				int width) {
-			const auto space = st.style.font->spacew;
-			const auto left = st.padding.left()
-				+ st.style.font->width(text)
-				+ space;
-			const auto available = width - left - st.padding.right();
-			badge->setVisible(available >= badge->width());
-			if (!badge->isHidden()) {
-				const auto top = st.padding.top()
-					+ st.style.font->ascent
-					- st::settingsPremiumNewBadge.style.font->ascent
-					- st::settingsPremiumNewBadgePadding.top();
-				badge->moveToLeft(left, top, width);
-			}
-		}, badge->lifetime());
-	}
+	Ui::NewBadge::AddAfterButtonText(button, std::move(title), st);
 
 	if (targets) {
 		targets->chatAutomation = button;
@@ -987,20 +963,9 @@ void SetupAccountsWrap(
 		}
 
 		if (!isActive) {
-			auto logoutCallback = [=] {
-				const auto callback = [=](Fn<void()> &&close) {
-					close();
-					Core::App().logoutWithChecks(&session->account());
-				};
-				window->show(
-					Ui::MakeConfirmBox({
-						.text = tr::lng_sure_logout(),
-						.confirmed = crl::guard(session, callback),
-						.confirmText = tr::lng_settings_logout(),
-						.confirmStyle = &st::attentionBoxButton,
-					}),
-					Ui::LayerOption::CloseOther);
-			};
+			auto logoutCallback = crl::guard(session, [=] {
+				Window::ShowLogoutOptions(&window->window(), session);
+			});
 			addAction({
 				.text = tr::lng_settings_logout(tr::now),
 				.handler = std::move(logoutCallback),

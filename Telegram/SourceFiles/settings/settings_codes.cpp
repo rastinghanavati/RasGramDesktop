@@ -30,7 +30,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_session_controller.h"
 #include "media/audio/media_audio_track.h"
 #include "settings/sections/settings_folders.h"
-#include "storage/storage_account.h"
 #include "api/api_updates.h"
 #include "base/qt/qt_common_adapters.h"
 #include "base/custom_app_icon.h"
@@ -268,7 +267,7 @@ auto GenerateCodes() {
 		Ui::Toast::Show(now ? "Testing chat theme colors!" : "Not testing..");
 	});
 
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
 	codes.emplace(u"customicon"_q, [](SessionController *window) {
 		const auto iconFilters = u"Icon files (*.icns *.png);;"_q + FileDialog::AllFilesFilter();
 		const auto change = [](const QString &path) {
@@ -289,7 +288,7 @@ auto GenerateCodes() {
 			change(QString());
 		});
 	});
-#endif // Q_OS_MAC
+#endif // Q_OS_MACOS
 
 	return codes;
 }
