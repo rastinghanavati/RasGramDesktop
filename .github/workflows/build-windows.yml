@@ -49,21 +49,8 @@ jobs:
         shell: bash
         run: echo "REPO_NAME=${GITHUB_REPOSITORY##*/}" >> $GITHUB_ENV
 
-      - name: Git auth through the TBuild symlink.
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          BASIC=$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)
-          echo "::add-mask::$BASIC"
-          echo "GIT_AUTH_HEADER=AUTHORIZATION: basic $BASIC" >> $GITHUB_ENV
-
       - name: Clone.
         uses: actions/checkout@v7
-        env:
-          GIT_CONFIG_COUNT: 1
-          GIT_CONFIG_KEY_0: http.https://github.com/.extraheader
-          GIT_CONFIG_VALUE_0: ${{ env.GIT_AUTH_HEADER }}
         with:
           submodules: recursive
           path: ${{ env.TBUILD }}\${{ env.REPO_NAME }}
