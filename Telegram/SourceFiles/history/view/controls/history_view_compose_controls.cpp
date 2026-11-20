@@ -144,8 +144,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_layers.h"
 
 // AyuGram includes
-#include "data/data_ai_compose_tones.h"
 #include "ayu/ayu_settings.h"
+#include "ayu/features/speech_to_text/ayu_speech_to_text.h"
+#include "ayu/ui/settings/settings_main.h"
+#include "data/data_ai_compose_tones.h"
 #include "history/history_item_components.h"
 
 
@@ -1252,6 +1254,8 @@ ComposeControls::ComposeControls(
 , _discardRichDraft(Ui::CreateChild<Ui::IconButton>(
 	_wrap.get(),
 	st::historyDiscardRichDraftButton))
+, _speechToText(Ui::CreateChild<Ui::IconButton>(_wrap.get(), _st.speechToText))
+, _speechToTextEngine(std::make_unique<Ayu::SpeechToText::Engine>())
 , _like(_features.likes
 	? Ui::CreateChild<Ui::IconButton>(_wrap.get(), _st.like)
 	: nullptr)
@@ -2898,6 +2902,7 @@ void ComposeControls::init() {
 	initDiscardRichDraftButton();
 	initWriteRestriction();
 	initVoiceRecordBar();
+	initSpeechToText();
 	initKeyHandler();
 	initEditStarsButton();
 	_minStarsCount.changes() | rpl::on_next([=] {
@@ -4544,11 +4549,74 @@ void ComposeControls::changeFocusedControl() {
 	}
 }
 
+void ComposeControls::initSpeechToText() {
+	_speechToText->setAccessibleName(tr::ayu_SpeechToText(tr::now));
+	_speechToText->clicks() | rpl::on_next([=] {
+		toggleSpeechToText();
+	}, _recordingStateLifetime);
+	_speechToTextEngine->stateValue() | rpl::on_next([=] {
+		updateSpeechToTextButton();
+	}, _recordingStateLifetime);
+	_speechToTextEngine->transcribed() | rpl::on_next([=](const QString &text) {
+		insertSpeechToText(text);
+	}, _recordingStateLifetime);
+	_speechToTextEngine->errors() | rpl::on_next([=](const QString &message) {
+		_show->showToast(message);
+	}, _recordingStateLifetime);
+}
+
+void ComposeControls::toggleSpeechToText() {
+	if (AyuSettings::getInstance().geminiApiKey().isEmpty()) {
+		_show->showBox(Ui::MakeConfirmBox({
+			.text = tr::ayu_SpeechToTextNoKey(),
+			.confirmed = [=] {
+				if (_regularWindow) {
+					_regularWindow->showSettings(::Settings::AyuMain::Id());
+				}
+			},
+			.confirmText = tr::ayu_SpeechToTextOpenSettings(),
+		}));
+		return;
+	}
+	_speechToTextEngine->toggle();
+}
+
+void ComposeControls::updateSpeechToTextButton() {
+	if (_speechToTextEngine->isRecording()) {
+		_speechToText->setIconColorOverride(st::attentionButtonFg->c);
+		_speechToText->setDisabled(false);
+	} else {
+		_speechToText->setIconColorOverride(std::nullopt);
+		_speechToText->setDisabled(_speechToTextEngine->isBusy());
+	}
+}
+
+void ComposeControls::insertSpeechToText(const QString &text) {
+	const auto was = _field->getTextWithTags();
+	const auto cursor = _field->textCursor();
+	const auto position = cursor.position();
+	const auto anchor = cursor.anchor();
+	const auto from = std::min(position, anchor);
+	const auto till = std::max(position, anchor);
+	const auto textFrom = int(_field->getTextWithTagsPart(0, from).text.size());
+	const auto textTill = int(_field->getTextWithTagsPart(0, till).text.size());
+	const auto tail = cursor.document()->characterCount() - till;
+	_field->setTextWithTags(ChatHelpers::TextWithTagsReplaced(
+		was,
+		textFrom,
+		textTill,
+		TextWithTags{ text, {} }));
+	_field->setCursorPosition(
+		_field->textCursor().document()->characterCount() - tail);
+	_field->setFocusFast();
+}
+
 void ComposeControls::initVoiceRecordBar() {
 	_voiceRecordBar->recordingStateChanges(
 	) | rpl::on_next([=](bool active) {
 		if (active) {
 			_recording = true;
+			_speechToTextEngine->cancel();
 			changeFocusedControl();
 		}
 		_field->setDisabled(active);
@@ -4558,6 +4626,7 @@ void ComposeControls::initVoiceRecordBar() {
 			_recording = false;
 			updateFieldVisibility();
 		}
+		updateControlsVisibility();
 		updateAiButtonVisibility();
 		updateSendAsFileVisibility();
 		updateExpandButtonVisibility();
@@ -5152,7 +5221,7 @@ void ComposeControls::finishAnimating() {
 
 void ComposeControls::updateControlsGeometry(QSize size) {
 	// (_commentsShown) (_attachToggle|_replaceMedia) (_sendAs) -- _inlineResults ------ _tabbedPanel -- _fieldBarCancel (_starsReaction)
-	// (_attachDocument|_attachPhoto) _field (_ttlInfo) (_scheduled) (_silent|_botCommandStart) _tabbedSelectorToggle _send
+	// (_attachDocument|_attachPhoto) _field (_ttlInfo) (_scheduled) (_silent|_botCommandStart) _tabbedSelectorToggle _speechToText _send
 
 	const auto &settings = AyuSettings::getInstance();
 
@@ -5173,6 +5242,7 @@ void ComposeControls::updateControlsGeometry(QSize size) {
 		- (_sendAs ? _sendAs->width() : 0)
 		- _st.padding.right()
 		- _send->width()
+		- (!_speechToText->isHidden() ? _speechToText->width() : 0)
 		- (_editStars ? _editStars->width() : 0)
 		- (_tabbedSelectorToggle->isHidden()
 			|| !settings.showEmojiButtonInMessageField()
@@ -5262,6 +5332,8 @@ void ComposeControls::updateControlsGeometry(QSize size) {
 	right += _st.padding.right();
 	_send->moveToRight(right, buttonsTop);
 	right += _send->width();
+	_speechToText->moveToRight(right, buttonsTop);
+	right += _speechToText->width();
 	if (_editStars) {
 		_editStars->moveToRight(right, buttonsTop);
 		right += _editStars->width();
@@ -5379,6 +5451,9 @@ void ComposeControls::updateControlsVisibility() {
 		_starsReaction->show();
 	}
 	SWITCH_BUTTON(_tabbedSelectorToggle, settings.showEmojiButtonInMessageField() && !_botKeyboardHide);
+	_speechToText->setVisible(
+		!hide
+		&& (!_voiceRecordBar->isActive() || _speechToTextEngine->isBusy()));
 	if (_ttlInfo) {
 		_ttlInfo->setVisible(
 			!hide && settings.showAutoDeleteButtonInMessageField());

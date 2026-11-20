@@ -32,6 +32,10 @@ namespace style {
 struct ComposeControls;
 } // namespace style
 
+namespace Ayu::SpeechToText {
+class Engine;
+} // namespace Ayu::SpeechToText
+
 namespace SendMenu {
 struct Details;
 } // namespace SendMenu
@@ -377,6 +381,10 @@ private:
 	void initForwardProcess();
 	void initWriteRestriction();
 	void initVoiceRecordBar();
+	void initSpeechToText();
+	void toggleSpeechToText();
+	void updateSpeechToTextButton();
+	void insertSpeechToText(const QString &text);
 	void initKeyHandler();
 	void initLikeButton();
 	void initEditStarsButton();
@@ -574,6 +582,8 @@ private:
 	Ui::IconButton * const _expand = nullptr;
 	Ui::IconButton * const _discardRichDraft = nullptr;
 	Ui::IconButton *_editStars = nullptr;
+	Ui::IconButton * const _speechToText;
+	std::unique_ptr<Ayu::SpeechToText::Engine> _speechToTextEngine;
 	Ui::IconButton *_like = nullptr;
 	rpl::variable<int> _minStarsCount;
 	std::optional<int> _chosenStarsCount;

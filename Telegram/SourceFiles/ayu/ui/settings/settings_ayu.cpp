@@ -9,11 +9,13 @@
 #include "lang_auto.h"
 #include "ayu/ayu_settings.h"
 #include "ayu/ui/ayu_userpic.h"
+#include "ayu/ui/boxes/edit_mark_box.h"
 #include "ayu/ui/settings/ayu_builder.h"
 #include "ayu/ui/settings/settings_ayu_utils.h"
 #include "ayu/ui/settings/settings_main.h"
 #include "boxes/peer_list_box.h"
 #include "core/application.h"
+#include "core/click_handler_types.h"
 #include "data/data_user.h"
 #include "main/main_account.h"
 #include "main/main_domain.h"
@@ -678,6 +680,80 @@ void BuildOther(SectionBuilder &builder, AyuSectionBuilder &ayu) {
 	});
 }
 
+void BuildSpeechToText(SectionBuilder &builder) {
+	const auto controller = builder.controller();
+	const auto settings = &AyuSettings::getInstance();
+
+	builder.addSubsectionTitle(tr::ayu_SpeechToText());
+
+	builder.addButton({
+		.id = u"ayu/geminiApiKey"_q,
+		.title = tr::ayu_SpeechToTextApiKey(),
+		.st = &st::settingsButtonNoIcon,
+		.label = settings->geminiApiKeyValue()
+			| rpl::map([](const QString &key) {
+				return key.isEmpty()
+					? tr::ayu_SpeechToTextApiKeyNotSet(tr::now)
+					: u"••••••••"_q;
+			}),
+		.onClick = [=] {
+			auto box = Box<EditMarkBox>(
+				tr::ayu_SpeechToTextApiKey(),
+				settings->geminiApiKey(),
+				QString(),
+				[=](const QString &value) {
+					AyuSettings::getInstance().setGeminiApiKey(value);
+				});
+			controller->show(std::move(box));
+		},
+	});
+
+	builder.addButton({
+		.id = u"ayu/geminiModel"_q,
+		.title = tr::ayu_SpeechToTextModel(),
+		.st = &st::settingsButtonNoIcon,
+		.label = settings->geminiModelValue(),
+		.onClick = [=] {
+			const auto models = std::vector<QString>{
+				u"gemini-2.5-flash"_q,
+				u"gemini-2.0-flash"_q,
+				u"gemini-2.0-flash-lite"_q,
+			};
+			const auto current = settings->geminiModel();
+			const auto found = std::find(models.begin(), models.end(), current);
+			const auto initial = (found == models.end())
+				? 1
+				: int(found - models.begin());
+			controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+				SingleChoiceBox(box, {
+					.title = tr::ayu_SpeechToTextModel(),
+					.options = models,
+					.initialSelection = initial,
+					.callback = [=](int index) {
+						AyuSettings::getInstance().setGeminiModel(models[index]);
+					},
+				});
+			}));
+		},
+	});
+
+	builder.addButton({
+		.id = u"ayu/geminiGetKey"_q,
+		.title = tr::ayu_SpeechToTextGetKey(),
+		.st = &st::settingsButtonNoIcon,
+		.onClick = [=] {
+			Core::App().openLocalUrl(
+				u"https://aistudio.google.com/apikey"_q,
+				QVariant::fromValue(ClickHandlerContext{
+					.sessionWindow = base::make_weak(controller),
+				}));
+		},
+	});
+
+	builder.addSkip();
+	builder.addDividerText(tr::ayu_SpeechToTextHint());
+}
+
 const auto kMeta = BuildHelper({
 	.id = AyuGhost::Id(),
 	.parentId = AyuMain::Id(),
@@ -694,6 +770,8 @@ const auto kMeta = BuildHelper({
 
 	ayu.addSectionDivider();
 	BuildOther(builder, ayu);
+	ayu.addSectionDivider();
+	BuildSpeechToText(builder);
 	builder.addSkip();
 });
 

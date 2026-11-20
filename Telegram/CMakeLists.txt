@@ -268,6 +268,8 @@ set(ayugram_files
         ayu/features/translator/implementations/yandex.h
         ayu/features/translator/implementations/base.cpp
         ayu/features/translator/implementations/base.h
+        ayu/features/speech_to_text/ayu_speech_to_text.cpp
+        ayu/features/speech_to_text/ayu_speech_to_text.h
         ayu/features/filters/filters_controller.cpp
         ayu/features/filters/filters_controller.h
         ayu/features/filters/filters_cache_controller.cpp

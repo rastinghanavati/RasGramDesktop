@@ -267,6 +267,7 @@ ComposeControls {
 	send: SendButton;
 	attach: IconButton;
 	emoji: EmojiButton;
+	speechToText: IconButton;
 	like: IconButton;
 	liked: icon;
 	editStars: IconButton;
@@ -1425,6 +1426,10 @@ historyAttachEmojiInner: IconButton(historyAttach) {
 	icon: icon {{ "chat/input_smile_face", historyComposeIconFg }};
 	iconOver: icon {{ "chat/input_smile_face", historyComposeIconFgOver }};
 }
+historySpeechToText: IconButton(historyAttach) {
+	icon: icon {{ "chat/input_speech_to_text", historyComposeIconFg }};
+	iconOver: icon {{ "chat/input_speech_to_text", historyComposeIconFgOver }};
+}
 historyAttachEmoji: EmojiButton {
 	inner: historyAttachEmojiInner;
 	bg: historyComposeAreaBg;
@@ -1674,6 +1679,7 @@ defaultComposeControls: ComposeControls {
 	send: historySend;
 	attach: historyAttach;
 	emoji: historyAttachEmoji;
+	speechToText: historySpeechToText;
 	suggestions: defaultEmojiSuggestions;
 	tabbed: defaultEmojiPan;
 	tabbedHeightMin: emojiPanMinHeight;

@@ -930,6 +930,18 @@ void AyuSettings::setMonoFont(const QString &val) {
 	save();
 }
 
+void AyuSettings::setGeminiApiKey(const QString &val) {
+	if (_geminiApiKey.current() == val) return;
+	_geminiApiKey = val.trimmed();
+	save();
+}
+
+void AyuSettings::setGeminiModel(const QString &val) {
+	if (_geminiModel.current() == val) return;
+	_geminiModel = val;
+	save();
+}
+
 void AyuSettings::setHideNotificationCounters(bool val) {
 	if (_hideNotificationCounters.current() == val) return;
 	_hideNotificationCounters = val;
@@ -1144,6 +1156,8 @@ void to_json(nlohmann::json &j, const AyuSettings &s) {
 		{"showGhostToggleInTray", s._showGhostToggleInTray.current()},
 		{"showStreamerToggleInTray", s._showStreamerToggleInTray.current()},
 		{"monoFont", s._monoFont.current()},
+		{"geminiApiKey", s._geminiApiKey.current()},
+		{"geminiModel", s._geminiModel.current()},
 		{"hideNotificationCounters", s._hideNotificationCounters.current()},
 		{"hideNotificationBadge", s._hideNotificationBadge.current()},
 		{"hideAllChatsFolder", s._hideAllChatsFolder.current()},
@@ -1248,6 +1262,8 @@ void from_json(const nlohmann::json &j, AyuSettings &s) {
 	s._showGhostToggleInTray = j.value("showGhostToggleInTray", defaults._showGhostToggleInTray.current());
 	s._showStreamerToggleInTray = j.value("showStreamerToggleInTray", defaults._showStreamerToggleInTray.current());
 	s._monoFont = j.value("monoFont", defaults._monoFont.current());
+	s._geminiApiKey = j.value("geminiApiKey", defaults._geminiApiKey.current());
+	s._geminiModel = j.value("geminiModel", defaults._geminiModel.current());
 	s._hideNotificationCounters = j.value("hideNotificationCounters", defaults._hideNotificationCounters.current());
 	s._hideNotificationBadge = j.value("hideNotificationBadge", defaults._hideNotificationBadge.current());
 	s._hideAllChatsFolder = j.value("hideAllChatsFolder", defaults._hideAllChatsFolder.current());

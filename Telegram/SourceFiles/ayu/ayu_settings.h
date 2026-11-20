@@ -332,6 +332,8 @@ public:
 	[[nodiscard]] bool showGhostToggleInTray() const { return _showGhostToggleInTray.current(); }
 	[[nodiscard]] bool showStreamerToggleInTray() const { return _showStreamerToggleInTray.current(); }
 	[[nodiscard]] const QString &monoFont() const { return _monoFont.current(); }
+	[[nodiscard]] const QString &geminiApiKey() const { return _geminiApiKey.current(); }
+	[[nodiscard]] const QString &geminiModel() const { return _geminiModel.current(); }
 	[[nodiscard]] bool hideNotificationCounters() const { return _hideNotificationCounters.current(); }
 	[[nodiscard]] bool hideNotificationBadge() const { return _hideNotificationBadge.current(); }
 	[[nodiscard]] bool hideAllChatsFolder() const { return _hideAllChatsFolder.current(); }
@@ -419,6 +421,8 @@ public:
 	void setShowGhostToggleInTray(bool val);
 	void setShowStreamerToggleInTray(bool val);
 	void setMonoFont(const QString &val);
+	void setGeminiApiKey(const QString &val);
+	void setGeminiModel(const QString &val);
 	void setHideNotificationCounters(bool val);
 	void setHideNotificationBadge(bool val);
 	void setHideAllChatsFolder(bool val);
@@ -573,6 +577,10 @@ public:
 	[[nodiscard]] rpl::producer<bool> showStreamerToggleInTrayChanges() const { return _showStreamerToggleInTray.changes(); }
 	[[nodiscard]] rpl::producer<QString> monoFontValue() const { return _monoFont.value(); }
 	[[nodiscard]] rpl::producer<QString> monoFontChanges() const { return _monoFont.changes(); }
+	[[nodiscard]] rpl::producer<QString> geminiApiKeyValue() const { return _geminiApiKey.value(); }
+	[[nodiscard]] rpl::producer<QString> geminiApiKeyChanges() const { return _geminiApiKey.changes(); }
+	[[nodiscard]] rpl::producer<QString> geminiModelValue() const { return _geminiModel.value(); }
+	[[nodiscard]] rpl::producer<QString> geminiModelChanges() const { return _geminiModel.changes(); }
 	[[nodiscard]] rpl::producer<bool> hideNotificationCountersValue() const { return _hideNotificationCounters.value(); }
 	[[nodiscard]] rpl::producer<bool> hideNotificationCountersChanges() const { return _hideNotificationCounters.changes(); }
 	[[nodiscard]] rpl::producer<bool> hideNotificationBadgeValue() const { return _hideNotificationBadge.value(); }
@@ -690,6 +698,8 @@ private:
 	rpl::variable<bool> _showStreamerToggleInTray = false;
 	rpl::variable<bool> _hidePremiumStatuses = false;
 	rpl::variable<QString> _monoFont;
+	rpl::variable<QString> _geminiApiKey;
+	rpl::variable<QString> _geminiModel = u"gemini-2.0-flash"_q;
 	rpl::variable<bool> _hideNotificationCounters = false;
 	rpl::variable<bool> _hideNotificationBadge = false;
 	rpl::variable<bool> _hideAllChatsFolder = false;
