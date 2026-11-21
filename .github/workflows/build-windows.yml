@@ -64,6 +64,86 @@ jobs:
           grep -rn "RasterGLSurface" "$TBUILD/$REPO_NAME/Telegram/lib_ui" \
             && exit 1 || echo "No RasterGLSurface left in lib_ui."
 
+      - name: Patch lib_ui for Telegram 7.4.5 APIs (Upper, Tracking, style fields).
+        shell: bash
+        run: |
+          set -euo pipefail
+          UI="$TBUILD/$REPO_NAME/Telegram/lib_ui"
+          curl -fsSL "https://raw.githubusercontent.com/desktop-app/lib_ui/562381f7537c60a2bec7b0fea37bdb14392bfbf3/ui/effects/animations.h" -o "$UI/ui/effects/animations.h"
+          echo "8326e888192f35355ea90da40f7f02305da12370a066e02047c3fcf152b5c0ed  $UI/ui/effects/animations.h" | sha256sum -c -
+          python3 - "$UI" <<'PYEOF'
+          #!/usr/bin/env python3
+          """Patch AyuGram lib_ui (e3d0582) with the upstream Telegram 7.4.5 APIs it
+          lacks. Insertions only, except two one-line behaviour ports. Every anchor
+          must occur exactly once or the step fails."""
+          import sys
+
+          BASE = sys.argv[1]
+
+
+          def patch(rel, old, new):
+              path = BASE + '/' + rel
+              with open(path, encoding='utf-8', newline='') as f:
+                  text = f.read()
+              count = text.count(old)
+              if count != 1:
+                  print('FAIL: ' + rel + ': anchor found '
+                        + str(count) + ' times (expected 1): ' + repr(old[:80]))
+                  sys.exit(1)
+              with open(path, 'w', encoding='utf-8', newline='') as f:
+                  f.write(text.replace(old, new))
+              print('patched ' + rel)
+
+
+          HEADER_DECLS = '[[nodiscard]] QString Upper(const QString &text);\n[[nodiscard]] QString Capitalized(const QString &text);\nvoid SetUpperLanguage(const QString &languageId);\n'
+          HELPERS = 'enum class UpperRules {\n\tDefault,\n\tTurkic,\n\tGeorgian,\n\tArmenian,\n};\n\nUpperRules GlobalUpperRules = UpperRules::Default;\n\n[[nodiscard]] bool IsMkhedruli(QChar ch) {\n\tconst auto code = ch.unicode();\n\treturn (code >= 0x10D0 && code <= 0x10FF);\n}\n\n[[nodiscard]] QString UpperKeepingGeorgian(const QString &text) {\n\tauto result = QString();\n\tresult.reserve(text.size());\n\tconst auto size = int(text.size());\n\tfor (auto from = 0; from < size;) {\n\t\tconst auto georgian = IsMkhedruli(text[from]);\n\t\tauto till = from + 1;\n\t\twhile (till < size && IsMkhedruli(text[till]) == georgian) {\n\t\t\t++till;\n\t\t}\n\t\tconst auto part = text.mid(from, till - from);\n\t\tresult.append(georgian ? part : part.toUpper());\n\t\tfrom = till;\n\t}\n\treturn result;\n}\n\n[[nodiscard]] bool HasGreekTonos(QChar ch) {\n\tconst auto code = ch.unicode();\n\treturn (code >= 0x0386 && code <= 0x0390)\n\t\t|| (code >= 0x03AC && code <= 0x03B0)\n\t\t|| (code >= 0x03CC && code <= 0x03CE);\n}\n\n[[nodiscard]] QChar WithoutGreekTonos(QChar ch) {\n\tswitch (ch.unicode()) {\n\tcase 0x0386: return QChar(0x0391);\n\tcase 0x0388: return QChar(0x0395);\n\tcase 0x0389: return QChar(0x0397);\n\tcase 0x038A: return QChar(0x0399);\n\tcase 0x038C: return QChar(0x039F);\n\tcase 0x038E: return QChar(0x03A5);\n\tcase 0x038F: return QChar(0x03A9);\n\tcase 0x0390: return QChar(0x03CA);\n\tcase 0x03AC: return QChar(0x03B1);\n\tcase 0x03AD: return QChar(0x03B5);\n\tcase 0x03AE: return QChar(0x03B7);\n\tcase 0x03AF: return QChar(0x03B9);\n\tcase 0x03B0: return QChar(0x03CB);\n\tcase 0x03CC: return QChar(0x03BF);\n\tcase 0x03CD: return QChar(0x03C5);\n\tcase 0x03CE: return QChar(0x03C9);\n\t}\n\treturn ch;\n}\n\n// A tonos on the first vowel of a pair moves as a dialytika to the second.\n[[nodiscard]] std::optional<QChar> GreekDialytika(QChar accented, QChar next) {\n\tconst auto first = WithoutGreekTonos(accented).toLower().unicode();\n\tconst auto second = next.toLower().unicode();\n\tconst auto alpha = 0x03B1, epsilon = 0x03B5, omicron = 0x03BF;\n\tconst auto iota = 0x03B9, upsilon = 0x03C5;\n\tif (second == iota\n\t\t&& (first == alpha\n\t\t\t|| first == epsilon\n\t\t\t|| first == omicron\n\t\t\t|| first == upsilon)) {\n\t\treturn QChar(0x03CA);\n\t} else if (second == upsilon\n\t\t&& (first == alpha || first == epsilon || first == omicron)) {\n\t\treturn QChar(0x03CB);\n\t}\n\treturn std::nullopt;\n}\n\n'
+          DEFS = 'QString Upper(const QString &text) {\n\tconst auto size = int(text.size());\n\tconst auto letter = [&](int index) {\n\t\treturn (index >= 0) && (index < size) && text[index].isLetter();\n\t};\n\tauto result = text;\n\tconst auto greek = std::any_of(text.begin(), text.end(), HasGreekTonos);\n\tfor (auto i = 0; greek && i != size; ++i) {\n\t\tconst auto ch = text[i];\n\t\tif (!HasGreekTonos(ch)) {\n\t\t\tcontinue;\n\t\t}\n\t\tconst auto code = ch.unicode();\n\t\tconst auto disjunctive = (code == 0x03AE || code == 0x0389)\n\t\t\t&& !letter(i - 1)\n\t\t\t&& !letter(i + 1);\n\t\tif (disjunctive) {\n\t\t\tcontinue;\n\t\t}\n\t\tresult[i] = WithoutGreekTonos(ch);\n\t\tif (i + 1 < size) {\n\t\t\tif (const auto dialytika = GreekDialytika(ch, text[i + 1])) {\n\t\t\t\tresult[i + 1] = *dialytika;\n\t\t\t}\n\t\t}\n\t}\n\tswitch (GlobalUpperRules) {\n\tcase UpperRules::Turkic:\n\t\treturn result.replace(QChar(\'i\'), QChar(0x0130)).toUpper();\n\tcase UpperRules::Georgian:\n\t\treturn UpperKeepingGeorgian(result);\n\tcase UpperRules::Armenian:\n\t\t// The reformed spelling capitalizes "և" as "ԵՎ", not "ԵՒ".\n\t\treturn result.replace(QChar(0x0587), u"եվ"_q).toUpper();\n\tcase UpperRules::Default:\n\t\tbreak;\n\t}\n\treturn result.toUpper();\n}\n\nQString Capitalized(const QString &text) {\n\tif (text.isEmpty()) {\n\t\treturn text;\n\t}\n\tconst auto first = text[0];\n\tswitch (GlobalUpperRules) {\n\tcase UpperRules::Turkic:\n\t\tif (first == QChar(\'i\')) {\n\t\t\treturn QChar(0x0130) + text.mid(1);\n\t\t}\n\t\tbreak;\n\tcase UpperRules::Georgian:\n\t\tif (IsMkhedruli(first)) {\n\t\t\treturn text;\n\t\t}\n\t\tbreak;\n\tcase UpperRules::Armenian:\n\t\tif (first.unicode() == 0x0587) {\n\t\t\treturn u"Եվ"_q + text.mid(1);\n\t\t}\n\t\tbreak;\n\tcase UpperRules::Default:\n\t\tbreak;\n\t}\n\tauto result = text;\n\tresult[0] = first.toTitleCase();\n\treturn result;\n}\n\nvoid SetUpperLanguage(const QString &languageId) {\n\tauto base = languageId.toLower();\n\tfor (const auto separator : { QChar(\'-\'), QChar(\'_\') }) {\n\t\tif (const auto cut = base.indexOf(separator); cut >= 0) {\n\t\t\tbase = base.left(cut);\n\t\t}\n\t}\n\tGlobalUpperRules = (base == u"tr"_q || base == u"az"_q)\n\t\t? UpperRules::Turkic\n\t\t: (base == u"ka"_q)\n\t\t? UpperRules::Georgian\n\t\t: (base == u"hy"_q)\n\t\t? UpperRules::Armenian\n\t\t: UpperRules::Default;\n}\n'
+          FITTING = 'style::font IconButtonWithText::fittingFont(int width) const {\n\tconst auto &font = _st.font;\n\tconst auto min = _st.minFontSize;\n\tif (min <= 0 || font->width(_text) <= width) {\n\t\treturn font;\n\t}\n\tfor (auto size = font->size() - 1; size > min; --size) {\n\t\tauto smaller = style::font(size, font->flags(), font->family());\n\t\tif (smaller->width(_text) <= width) {\n\t\t\treturn smaller;\n\t\t}\n\t}\n\treturn style::font(min, font->flags(), font->family());\n}\n\n'
+
+          # 1. Ui::Text::Upper / Capitalized / SetUpperLanguage declarations.
+          patch('ui/text/text_utilities.h',
+                '[[nodiscard]] QString StripUrlProtocol(const QString &link);',
+                '[[nodiscard]] QString StripUrlProtocol(const QString &link);\n\n'
+                + HEADER_DECLS.rstrip('\n'))
+
+          # 2. UpperRules machinery (anonymous namespace) before WithSingleEntity.
+          patch('ui/text/text_utilities.cpp',
+                '[[nodiscard]] TextWithEntities WithSingleEntity(',
+                HELPERS + '[[nodiscard]] TextWithEntities WithSingleEntity(')
+
+          # 3. Upper / Capitalized / SetUpperLanguage definitions before namespace close.
+          patch('ui/text/text_utilities.cpp',
+                '} // namespace Text',
+                DEFS + '\n} // namespace Text')
+
+          # 4. InputField.placeholderShiftLeft + IconButtonWithText.minFontSize fields.
+          patch('ui/widgets/widgets.style',
+                '\tplaceholderShift: pixels;\n\tplaceholderFont: font;',
+                '\tplaceholderShift: pixels;\n\tplaceholderShiftLeft: pixels;\n\tplaceholderFont: font;')
+          patch('ui/widgets/widgets.style',
+                '\tfont: font;\n}\n\nMediaSlider {',
+                '\tfont: font;\n\tminFontSize: pixels;\n}\n\nMediaSlider {')
+
+          # 5. IconButtonWithText::fittingFont (uses minFontSize) + use it in paint.
+          patch('ui/widgets/icon_button_with_text.cpp',
+                'void IconButtonWithText::paintEvent(QPaintEvent *e) {',
+                FITTING + 'void IconButtonWithText::paintEvent(QPaintEvent *e) {')
+          patch('ui/widgets/icon_button_with_text.cpp',
+                '\tp.setFont(_st.font);',
+                '\tp.setFont(fittingFont(r.width()));')
+
+          # 6. InputField placeholder horizontal shift (uses placeholderShiftLeft).
+          patch('ui/widgets/fields/input_field.cpp',
+                '\t\tauto placeholderTop = anim::interpolate(0, _st.placeholderShift, placeholderShiftDegree);',
+                '\t\tauto placeholderTop = anim::interpolate(0, _st.placeholderShift, placeholderShiftDegree);\n'
+                '\t\tauto placeholderLeft = anim::interpolate(0, _st.placeholderShiftLeft, placeholderShiftDegree);')
+          patch('ui/widgets/fields/input_field.cpp',
+                '\t\tr.moveTop(r.top() + placeholderTop);',
+                '\t\tr.translate(placeholderLeft, placeholderTop);')
+
+          print('lib_ui patch complete.')
+          PYEOF
+
       - name: First set up.
         shell: bash
         run: |
