@@ -55,6 +55,15 @@ jobs:
           submodules: recursive
           path: ${{ env.TBUILD }}\${{ env.REPO_NAME }}
 
+      - name: Patch lib_ui for Qt 6.12 (drop deprecated RasterGLSurface).
+        shell: bash
+        run: |
+          sed -i '/case QSurface::RasterGLSurface/d' \
+            "$TBUILD/$REPO_NAME/Telegram/lib_ui/ui/rhi/rhi_surface.cpp" \
+            "$TBUILD/$REPO_NAME/Telegram/lib_ui/ui/platform/win/ui_window_win.cpp"
+          grep -rn "RasterGLSurface" "$TBUILD/$REPO_NAME/Telegram/lib_ui" \
+            && exit 1 || echo "No RasterGLSurface left in lib_ui."
+
       - name: First set up.
         shell: bash
         run: |
