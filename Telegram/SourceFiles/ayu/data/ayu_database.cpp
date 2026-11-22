@@ -4,7 +4,9 @@
 // but be respectful and credit the original author.
 //
 // Copyright @Radolyn, 2026
-#define _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING
+// sqlite_orm's std::wstring support uses the deprecated <codecvt> header,
+// which MSVC rejects as an error; AyuGram only stores std::string.
+#define SQLITE_ORM_OMITS_CODECVT
 #include "ayu/data/ayu_database.h"
 
 #include "ayu/data/entities.h"

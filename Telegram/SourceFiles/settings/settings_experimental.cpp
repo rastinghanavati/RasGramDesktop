@@ -164,6 +164,7 @@ struct ResolvedReferrer {
 		return u"ayu/wideMultiplier"_q;
 	}
 	return QString();
+}
 
 enum class ImportResult {
 	Done,
