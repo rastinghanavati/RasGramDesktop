@@ -71,6 +71,12 @@ jobs:
           UI="$TBUILD/$REPO_NAME/Telegram/lib_ui"
           curl -fsSL "https://raw.githubusercontent.com/desktop-app/lib_ui/562381f7537c60a2bec7b0fea37bdb14392bfbf3/ui/effects/animations.h" -o "$UI/ui/effects/animations.h"
           echo "8326e888192f35355ea90da40f7f02305da12370a066e02047c3fcf152b5c0ed  $UI/ui/effects/animations.h" | sha256sum -c -
+          curl -fsSL "https://raw.githubusercontent.com/desktop-app/lib_ui/562381f7537c60a2bec7b0fea37bdb14392bfbf3/ui/style/style_core_palette.h" -o "$UI/ui/style/style_core_palette.h"
+          echo "b9bbeb7f27a78435c47472c40ca87aa4b91e142e65596c84c74ef5a4331d0f9a  $UI/ui/style/style_core_palette.h" | sha256sum -c -
+          curl -fsSL "https://raw.githubusercontent.com/desktop-app/lib_ui/562381f7537c60a2bec7b0fea37bdb14392bfbf3/ui/style/style_core_palette.cpp" -o "$UI/ui/style/style_core_palette.cpp"
+          echo "32dd1995feb6d052db1fb24c8864c0d455bad019305878d6af249a290ebf97de  $UI/ui/style/style_core_palette.cpp" | sha256sum -c -
+          curl -fsSL "https://raw.githubusercontent.com/desktop-app/lib_ui/562381f7537c60a2bec7b0fea37bdb14392bfbf3/ui/style/style_core_scale.cpp" -o "$UI/ui/style/style_core_scale.cpp"
+          echo "3002e73aa6dc265cfcebc6253602ffd831acd82f2d4a4c211f54147b9d944e15  $UI/ui/style/style_core_scale.cpp" | sha256sum -c -
           python3 - "$UI" <<'PYEOF'
           #!/usr/bin/env python3
           """Patch AyuGram lib_ui (e3d0582) with the upstream Telegram 7.4.5 APIs it
@@ -158,6 +164,511 @@ jobs:
           print('lib_ui patch complete.')
           PYEOF
 
+      - name: Patch lib_ui for Telegram 7.4.5 UI APIs (SettingsButton, SeparatePanel, palette Override, BaseDpi, PopupMenu).
+        shell: bash
+        run: |
+          set -euo pipefail
+          UI="$TBUILD/$REPO_NAME/Telegram/lib_ui"
+          python3 - "$UI" <<'PYEOF'
+          #!/usr/bin/env python3
+          """Patch AyuGram lib_ui (e3d0582) with the upstream Telegram 7.4.5 UI APIs it
+          lacks, needed by the main Telegram 7.4.5 sources (td_ui): SettingsButton
+          multi-line text, SeparatePanel one-argument anchoring and contrast colors,
+          style::BaseDpi, a public InputField::updatePalette, the main_palette
+          Override scope, and PopupMenu::refreshAnimationCache. Insertions only,
+          except the SettingsButton paint/resize ports and the PopupMenu show
+          animation extraction. Every anchor must occur exactly once or the step
+          fails. Files are normalized to LF line endings first: the Windows runner
+          checks them out as CRLF, and the anchors use \n only."""
+          import sys
+
+          BASE = sys.argv[1]
+
+
+          def patch(rel, old, new):
+              path = BASE + '/' + rel
+              with open(path, encoding='utf-8', newline='') as f:
+                  text = f.read()
+              crlf = text.count('\r')
+              if crlf:
+                  print('normalized ' + str(crlf)
+                        + ' CR line endings in ' + rel)
+              text = text.replace('\r\n', '\n').replace('\r', '\n')
+              count = text.count(old)
+              if count != 1:
+                  print('FAIL: ' + rel + ': anchor found '
+                        + str(count) + ' times (expected 1): ' + repr(old[:80]))
+                  sys.exit(1)
+              with open(path, 'w', encoding='utf-8', newline='') as f:
+                  f.write(text.replace(old, new))
+              print('patched ' + rel)
+
+
+          SET_ALLOW = 'void SettingsButton::setAllowTextLines(int lines) {\n\tconst auto wrapChanged = ((_allowTextLines == 1) != (lines == 1));\n\t_allowTextLines = lines;\n\tif (wrapChanged) {\n\t\t// An export of _text would lose colorized parts and custom objects.\n\t\tauto source = _textSource;\n\t\tsetText(std::move(source));\n\t}\n\tresizeToWidth(widthNoMargins());\n\tupdate();\n}\n\n'
+          TEXT_WIDTH = 'int SettingsButton::textAvailableWidth(int outerw) const {\n\treturn outerw\n\t\t- _padding.left()\n\t\t- _padding.right()\n\t\t- (_toggle ? (_st.toggleSkip + _toggle->getSize().width()) : 0);\n}\n'
+          CONTRAST_DEF = 'ContrastColors ComputeContrastColors(QColor background) {\n\tconst auto contrast = 2.5;\n\tconst auto luminance = 0.2126 * background.redF()\n\t\t+ 0.7152 * background.greenF()\n\t\t+ 0.0722 * background.blueF();\n\tconst auto text = (luminance > 0.5)\n\t\t? QColor(0, 0, 0)\n\t\t: QColor(255, 255, 255);\n\tconst auto textLuminance = (luminance > 0.5) ? 0 : 1;\n\tconst auto adaptiveOpacity = (luminance - textLuminance + contrast)\n\t\t/ contrast;\n\tconst auto opacity = std::clamp(adaptiveOpacity, 0.5, 0.64);\n\tauto control = text;\n\tcontrol.setAlphaF(opacity);\n\tauto ripple = text;\n\tripple.setAlphaF(opacity * 0.1);\n\treturn { text, control, ripple };\n}\n'
+          OVERRIDE_STATE = 'namespace {\n\nstruct MainOverrideState {\n\tconst palette *active = nullptr;\n\tuint64 shadowIdentity = 0;\n\tint shadowVersion = -1;\n\tstd::vector<int> carried;\n\tstd::unique_ptr<palette> shadow;\n};\n\n[[nodiscard]] MainOverrideState &MainOverride() {\n\tstatic auto result = MainOverrideState(); // main thread only\n\treturn result;\n}\n\nvoid InvalidateMainOverride() {\n\tExpects(!MainOverride().active);\n\n\tMainOverride().shadowIdentity = 0;\n}\n\n[[nodiscard]] uint64 NextIdentity() {\n\tstatic auto counter = std::atomic<uint64>();\n\treturn counter.fetch_add(1, std::memory_order_relaxed) + 1;\n}\n\n} // namespace\n\n'
+          SWITCH_DEF = 'void palette::SwitchMainOverride(const palette *target) {\n\tauto &state = MainOverride();\n\tif (!target) {\n\t\tif (!state.active) {\n\t\t\treturn;\n\t\t}\n\t} else if (state.active == target\n\t\t&& state.shadowIdentity == target->_identity) {\n\t\treturn;\n\t}\n\tauto &main = const_cast<palette&>(*main_palette::get());\n\tconst auto exchange = [&] {\n\t\tauto &shadow = *state.shadow;\n\t\tfor (const auto index : state.carried) {\n\t\t\tauto &slot = *main.data(index);\n\t\t\tauto &other = *shadow.data(index);\n\t\t\tstd::swap(slot.c, other.c);\n\t\t\tslot.p.swap(other.p);\n\t\t\tslot.b.swap(other.b);\n\t\t}\n\t};\n\tif (state.active) {\n\t\texchange();\n\t\tstate.active = nullptr;\n\t}\n\tif (!target) {\n\t\treturn;\n\t}\n\tExpects(target->_ready);\n\n\tconst auto version = PaletteVersion();\n\tif (state.shadowIdentity != target->_identity\n\t\t|| state.shadowVersion != version) {\n\t\tif (!state.shadow) {\n\t\t\tstate.shadow = std::make_unique<palette>();\n\t\t}\n\t\tstate.carried.clear();\n\t\tfor (auto i = 0; i != kCount; ++i) {\n\t\t\tif (main.data(i)->c != target->data(i)->c) {\n\t\t\t\tstate.carried.push_back(i);\n\t\t\t\tstate.shadow->setData(i, *target->data(i));\n\t\t\t}\n\t\t}\n\t\tstate.shadowIdentity = target->_identity;\n\t\tstate.shadowVersion = version;\n\t}\n\texchange();\n\tstate.active = target;\n}\n'
+          OVERRIDE_DEF = 'Override::Override(const palette *with)\n: _was(MainOverride().active) {\n\tpalette::SwitchMainOverride(with);\n}\n\nOverride::~Override() {\n\tpalette::SwitchMainOverride(_was);\n}\n\nuint64 CurrentOverrideIdentity() {\n\tconst auto &state = MainOverride();\n\treturn state.active ? state.shadowIdentity : 0;\n}\n'
+          CHILD_HELPERS = 'struct ChildState {\n\tQPointer<QWidget> widget;\n\tbool hidden = false;\n\tbool transparentForMouse = false;\n};\n\n[[nodiscard]] std::vector<ChildState> MakeChildrenTransparentForMouse(\n\t\tnot_null<QWidget*> parent) {\n\tauto result = std::vector<ChildState>();\n\tfor (const auto child : parent->children()) {\n\t\tconst auto widget = qobject_cast<QWidget*>(child);\n\t\tif (widget && !widget->isWindow()) {\n\t\t\tresult.push_back({\n\t\t\t\t.widget = widget,\n\t\t\t\t.hidden = widget->isHidden(),\n\t\t\t\t.transparentForMouse = widget->testAttribute(\n\t\t\t\t\tQt::WA_TransparentForMouseEvents),\n\t\t\t});\n\t\t\twidget->setAttribute(Qt::WA_TransparentForMouseEvents);\n\t\t}\n\t}\n\treturn result;\n}\n\nvoid RestoreChildren(const std::vector<ChildState> &states) {\n\tfor (const auto &state : states) {\n\t\tif (const auto widget = state.widget.data()) {\n\t\t\tif (widget->isHidden() != state.hidden) {\n\t\t\t\twidget->setVisible(!state.hidden);\n\t\t\t}\n\t\t\twidget->setAttribute(\n\t\t\t\tQt::WA_TransparentForMouseEvents,\n\t\t\t\tstate.transparentForMouse);\n\t\t}\n\t}\n}\n\n'
+          REFRESH_DEFS = 'void PopupMenu::refreshAnimationCache() {\n\tif (isHidden()) {\n\t\treturn;\n\t} else if (!_showAnimation && !_a_opacity.animating()) {\n\t\tupdate();\n\t\treturn;\n\t}\n\t_refreshingAnimationCache = true;\n\tconst auto children = MakeChildrenTransparentForMouse(this);\n\tif (_showAnimation) {\n\t\tprepareShowAnimation();\n\t}\n\tif (_a_opacity.animating()) {\n\t\tauto opacityAnimation = base::take(_a_opacity);\n\t\tconst auto hiding = base::take(_hiding);\n\t\tprepareCache();\n\t\t_hiding = hiding;\n\t\t_a_opacity = base::take(opacityAnimation);\n\t}\n\tRestoreChildren(children);\n\t_refreshingAnimationCache = false;\n\tupdate();\n}\n\nvoid PopupMenu::prepareShowAnimation() {\n\tauto opacityAnimation = base::take(_a_opacity);\n\tshowChildren();\n\tauto cache = grabForPanelAnimation();\n\t_a_opacity = base::take(opacityAnimation);\n\n\tconst auto pixelRatio = style::DevicePixelRatio();\n\t_showAnimation = std::make_unique<PanelAnimation>(_st.animation, _origin);\n\t_showAnimation->setFinalImage(std::move(cache), QRect(_inner.topLeft() * pixelRatio, _inner.size() * pixelRatio), _st.radius);\n\tif (_useTransparency) {\n\t\t_showAnimation->setCornerMasks(Images::CornersMask(_st.radius));\n\t} else {\n\t\t_showAnimation->setSkipShadow(true);\n\t}\n\t_showAnimation->start();\n}\n\n'
+
+          # 1. SettingsButton::setAllowTextLines declaration.
+          patch('ui/widgets/buttons.h',
+                '\tvoid setPaddingOverride(style::margins padding);\n',
+                '\tvoid setPaddingOverride(style::margins padding);\n'
+                '\tvoid setAllowTextLines(int lines = 0);\n')
+
+          # 2. SettingsButton::textAvailableWidth declaration.
+          patch('ui/widgets/buttons.h',
+                '\tvoid setText(TextWithEntities &&text);\n'
+                '\t[[nodiscard]] QRect toggleRect() const;\n',
+                '\tvoid setText(TextWithEntities &&text);\n'
+                '\t[[nodiscard]] QRect toggleRect() const;\n'
+                '\t[[nodiscard]] int textAvailableWidth(int outerw) const;\n')
+
+          # 3. SettingsButton multi-line text state.
+          patch('ui/widgets/buttons.h',
+                '\tUi::Text::String _text;\n'
+                '\tstd::unique_ptr<Ui::ToggleView> _toggle;\n',
+                '\tUi::Text::String _text;\n'
+                '\tTextWithEntities _textSource;\n'
+                '\tint _allowTextLines = 1;\n'
+                '\tstd::unique_ptr<Ui::ToggleView> _toggle;\n')
+
+          # 4. SettingsButton::setAllowTextLines definition.
+          patch('ui/widgets/buttons.cpp',
+                'const style::SettingsButton &SettingsButton::st() const {\n',
+                SET_ALLOW
+                + 'const style::SettingsButton &SettingsButton::st() const {\n')
+
+          # 5. SettingsButton::paintText uses textAvailableWidth.
+          patch('ui/widgets/buttons.cpp',
+                'void SettingsButton::paintText(Painter &p, bool over, int outerw) const {\n'
+                '\tauto available = outerw - _padding.left() - _padding.right();\n'
+                '\tif (_toggle) {\n'
+                '\t\tavailable -= (width() - toggleRect().x());\n'
+                '\t}\n',
+                'void SettingsButton::paintText(Painter &p, bool over, int outerw) const {\n'
+                '\tconst auto available = textAvailableWidth(outerw);\n')
+
+          # 6. SettingsButton::paintText draws the allowed lines + helper definition.
+          patch('ui/widgets/buttons.cpp',
+                '\t_text.drawLeftElided(\n'
+                '\t\tp,\n'
+                '\t\t_padding.left(),\n'
+                '\t\t_padding.top(),\n'
+                '\t\tavailable,\n'
+                '\t\touterw);\n'
+                '}\n',
+                '\t_text.drawLeftElided(\n'
+                '\t\tp,\n'
+                '\t\t_padding.left(),\n'
+                '\t\t_padding.top(),\n'
+                '\t\tavailable,\n'
+                '\t\touterw,\n'
+                '\t\t_allowTextLines);\n'
+                '}\n\n'
+                + TEXT_WIDTH)
+
+          # 7. SettingsButton::resizeGetHeight grows for multi-line text.
+          patch('ui/widgets/buttons.cpp',
+                'int SettingsButton::resizeGetHeight(int newWidth) {\n'
+                '\treturn _padding.top() + _st.height + _padding.bottom();\n'
+                '}\n',
+                'int SettingsButton::resizeGetHeight(int newWidth) {\n'
+                '\tconst auto single = _padding.top() + _st.height + _padding.bottom();\n'
+                '\tconst auto available = textAvailableWidth(newWidth);\n'
+                '\tif (_allowTextLines == 1 || available <= 0 || _text.isEmpty()) {\n'
+                '\t\treturn single;\n'
+                '\t}\n'
+                '\tconst auto height = _text.countDimensions(Text::SimpleGeometry(\n'
+                '\t\tavailable,\n'
+                '\t\t_allowTextLines,\n'
+                '\t\t0,\n'
+                '\t\tfalse)).height;\n'
+                '\treturn std::max(single, single - _text.lineHeight() + height);\n'
+                '}\n')
+
+          # 8. SettingsButton::setText keeps its source for re-wrapping.
+          patch('ui/widgets/buttons.cpp',
+                'void SettingsButton::setText(TextWithEntities &&text) {\n'
+                '\t_text.setMarkedText(_st.style, text, kMarkupTextOptions, _context);\n'
+                '\taccessibilityNameChanged();\n'
+                '\tupdate();\n'
+                '}\n',
+                'void SettingsButton::setText(TextWithEntities &&text) {\n'
+                '\tconst auto minResizeWidth = (_allowTextLines == 1) ? kQFixedMax : 1;\n'
+                '\tif (_text.minResizeWidth() != minResizeWidth) {\n'
+                '\t\t_text = Text::String(minResizeWidth);\n'
+                '\t}\n'
+                '\t_textSource = std::move(text);\n'
+                '\t_text.setMarkedText(_st.style, _textSource, kMarkupTextOptions, _context);\n'
+                '\taccessibilityNameChanged();\n'
+                '\tif (_allowTextLines != 1) {\n'
+                '\t\tresizeToWidth(widthNoMargins());\n'
+                '\t}\n'
+                '\tupdate();\n'
+                '}\n')
+
+          # 9. ContrastColors + ComputeContrastColors declaration.
+          patch('ui/widgets/separate_panel.h',
+                '\tFn<void(QPainter &p, QSize size)> paint;\n'
+                '};\n\n'
+                'class SeparatePanel final : public RpWidget {',
+                '\tFn<void(QPainter &p, QSize size)> paint;\n'
+                '};\n\n'
+                'struct ContrastColors {\n'
+                '\tQColor text;\n'
+                '\tQColor control;\n'
+                '\tQColor ripple;\n'
+                '};\n'
+                '[[nodiscard]] ContrastColors ComputeContrastColors(QColor background);\n\n'
+                'class SeparatePanel final : public RpWidget {')
+
+          # 10. SeparatePanel::setAnchorData one-argument overload declaration.
+          patch('ui/widgets/separate_panel.h',
+                '\tvoid setAnchorData(\n'
+                '\t\tstd::optional<QRect> geometry,\n'
+                '\t\tPlatform::ForeignParent transientParent);\n',
+                '\tvoid setAnchorData(\n'
+                '\t\tstd::optional<QRect> geometry,\n'
+                '\t\tPlatform::ForeignParent transientParent);\n'
+                '\tvoid setAnchorData(Platform::ForeignParent transientParent);\n')
+
+          # 11. ComputeContrastColors definition (extracted from the palette helper).
+          patch('ui/widgets/separate_panel.cpp',
+                '} // namespace\n\n'
+                'class SeparatePanel::FullScreenButton : public RippleButton {',
+                '} // namespace\n\n'
+                + CONTRAST_DEF
+                + '\nclass SeparatePanel::FullScreenButton : public RippleButton {')
+
+          # 12. SeparatePanel::setAnchorData one-argument overload definition.
+          patch('ui/widgets/separate_panel.cpp',
+                'void SeparatePanel::showAndActivate() {',
+                'void SeparatePanel::setAnchorData(Platform::ForeignParent transientParent) {\n'
+                '\tsetAnchorData(std::nullopt, std::move(transientParent));\n'
+                '}\n\n'
+                'void SeparatePanel::showAndActivate() {')
+
+          # 13. style::BaseDpi declaration.
+          patch('ui/style/style_core_scale.h',
+                '[[nodiscard]] int CheckScale(int scale);\n',
+                '[[nodiscard]] int CheckScale(int scale);\n'
+                '[[nodiscard]] int BaseDpi();\n')
+
+          # 14. style::BaseDpi includes.
+          patch('ui/style/style_core_scale.cpp',
+                '#include "base/assertion.h"\n',
+                '#include "base/assertion.h"\n'
+                '#include "base/platform/base_platform_info.h"\n\n'
+                '#include <QtGui/QGuiApplication>\n'
+                '#include <QtGui/QScreen>\n\n'
+                '#ifndef DESKTOP_APP_DISABLE_PRIVATE_QT_API\n'
+                '#include <qpa/qplatformscreen.h>\n'
+                '#endif // !DESKTOP_APP_DISABLE_PRIVATE_QT_API\n')
+
+          # 15. style::BaseDpi definition.
+          patch('ui/style/style_core_scale.cpp',
+                '\t\t: std::clamp(scale, kScaleMin, MaxScaleForRatio(DevicePixelRatio()));\n'
+                '}\n\n'
+                '} // namespace style\n',
+                '\t\t: std::clamp(scale, kScaleMin, MaxScaleForRatio(DevicePixelRatio()));\n'
+                '}\n\n'
+                'int BaseDpi() {\n'
+                '#ifndef DESKTOP_APP_DISABLE_PRIVATE_QT_API\n'
+                '\tif (const auto screen = QGuiApplication::primaryScreen()) {\n'
+                '\t\tconst auto pair = screen->handle()->logicalBaseDpi();\n'
+                '\t\treturn int(base::SafeRound((pair.first + pair.second) * 0.5));\n'
+                '\t}\n'
+                '#endif // !DESKTOP_APP_DISABLE_PRIVATE_QT_API\n'
+                '\treturn Platform::IsMac() ? 72 : 96;\n'
+                '}\n\n'
+                '} // namespace style\n')
+
+          # 16. InputField::updatePalette becomes public.
+          patch('ui/widgets/fields/input_field.h',
+                '\tvoid setPlaceholderColorOverride(const style::color &color);\n',
+                '\tvoid setPlaceholderColorOverride(const style::color &color);\n'
+                '\tvoid updatePalette();\n')
+
+          # 17. ...and drops out of the private section.
+          patch('ui/widgets/fields/input_field.h',
+                '\tvoid updatePalette();\n'
+                '\tvoid refreshPlaceholder(const QString &text);\n',
+                '\tvoid refreshPlaceholder(const QString &text);\n')
+
+          # 18. main_palette::Override forward declaration.
+          patch('ui/style/style_core_palette.h',
+                'struct colorizer;\n\n'
+                'class palette : public palette_data {',
+                'struct colorizer;\n\n'
+                'namespace main_palette {\n'
+                'class Override;\n'
+                '} // namespace main_palette\n\n'
+                'class palette : public palette_data {')
+
+          # 19. Palette identity note.
+          patch('ui/style/style_core_palette.h',
+                '\tpalette();\n'
+                '\tpalette(const palette &other) = delete;',
+                "\t// WHY: override caches can't key on reused addresses: the first finalize,\n"
+                "\t// reset, assignment and a successful load or setColor renew an identity.\n"
+                "\t// Once ready use setColor (Duplicate still writes), not colorAtIndex(i).set().\n"
+                '\tpalette();\n'
+                '\tpalette(const palette &other) = delete;')
+
+          # 20. main_palette::Override is a friend of palette.
+          patch('ui/style/style_core_palette.h',
+                '\tfriend class palette_data;\n',
+                '\tfriend class palette_data;\n'
+                '\tfriend class main_palette::Override;\n')
+
+          # 21. palette::SwitchMainOverride declaration.
+          patch('ui/style/style_core_palette.h',
+                '\t[[nodiscard]] static auto PrepareFinalizeHelper(const colorizer &with)\n'
+                '\t\t-> std::unique_ptr<FinalizeHelper>;\n',
+                '\t[[nodiscard]] static auto PrepareFinalizeHelper(const colorizer &with)\n'
+                '\t\t-> std::unique_ptr<FinalizeHelper>;\n'
+                '\tstatic void SwitchMainOverride(const palette *target);\n')
+
+          # 22. Palette identity member.
+          patch('ui/style/style_core_palette.h',
+                '\tstd::unique_ptr<FinalizeHelper> _finalizeHelper;\n'
+                '\tbool _ready = false;\n',
+                '\tstd::unique_ptr<FinalizeHelper> _finalizeHelper;\n'
+                '\tuint64 _identity = 0;\n'
+                '\tbool _ready = false;\n')
+
+          # 23. main_palette::Override class + CurrentOverrideIdentity declaration.
+          patch('ui/style/style_core_palette.h',
+                'int indexOfColor(color c);\n\n'
+                '} // namespace main_palette',
+                'int indexOfColor(color c);\n\n'
+                '// Edits apply at the next entry or restore; restore targets must stay alive.\n'
+                'class Override final {\n'
+                'public:\n'
+                '\texplicit Override(const palette *with);\n'
+                '\tOverride(const Override &) = delete;\n'
+                '\tOverride &operator=(const Override &) = delete;\n'
+                '\t~Override();\n\n'
+                'private:\n'
+                '\tconst palette *_was = nullptr;\n\n'
+                '};\n\n'
+                '// Identity of the colours an override applied, or zero without one.\n'
+                '[[nodiscard]] uint64 CurrentOverrideIdentity();\n\n'
+                '} // namespace main_palette')
+
+          # 24. <atomic> for the palette identity counter.
+          patch('ui/style/style_core_palette.cpp',
+                '#include "ui/style/style_palette_colorizer.h"\n',
+                '#include "ui/style/style_palette_colorizer.h"\n\n'
+                '#include <atomic>\n')
+
+          # 25. Main override state + identity counter.
+          patch('ui/style/style_core_palette.cpp',
+                'namespace style {\n\n'
+                'struct palette::FinalizeHelper {',
+                'namespace style {\n'
+                + OVERRIDE_STATE
+                + 'struct palette::FinalizeHelper {')
+
+          # 26. Renew the identity on finalize.
+          patch('ui/style/style_core_palette.cpp',
+                '\tif (_ready) return;\n'
+                '\t_ready = true;\n\n'
+                '\t_finalizeHelper = PrepareFinalizeHelper(with);',
+                '\tif (_ready) return;\n'
+                '\t_ready = true;\n'
+                '\t_identity = NextIdentity();\n\n'
+                '\t_finalizeHelper = PrepareFinalizeHelper(with);')
+
+          # 27. Renew the identity on assignment.
+          patch('ui/style/style_core_palette.cpp',
+                '\t\t\t_ready = false;\n'
+                '\t\t}\n'
+                '\t}\n'
+                '\tif (wasReady && !_ready) {',
+                '\t\t\t_ready = false;\n'
+                '\t\t}\n'
+                '\t}\n'
+                '\t_identity = NextIdentity();\n'
+                '\tif (wasReady && !_ready) {')
+
+          # 28. Renew the identity on load.
+          patch('ui/style/style_core_palette.cpp',
+                '\t\tsetData(i, { p[i * 4 + 0], p[i * 4 + 1], p[i * 4 + 2], p[i * 4 + 3] });\n'
+                '\t}\n'
+                '\treturn true;\n'
+                '}',
+                '\t\tsetData(i, { p[i * 4 + 0], p[i * 4 + 1], p[i * 4 + 2], p[i * 4 + 3] });\n'
+                '\t}\n'
+                '\t_identity = NextIdentity();\n'
+                '\treturn true;\n'
+                '}')
+
+          # 29. Renew the identity on setColor.
+          patch('ui/style/style_core_palette.cpp',
+                '\tsetData(nameIndex, { r, g, b, a });\n'
+                '\treturn duplicate ? SetResult::Duplicate : SetResult::Ok;\n'
+                '}',
+                '\tsetData(nameIndex, { r, g, b, a });\n'
+                '\t_identity = NextIdentity();\n'
+                '\treturn duplicate ? SetResult::Duplicate : SetResult::Ok;\n'
+                '}')
+
+          # 30. Renew the identity on setColor from another color.
+          patch('ui/style/style_core_palette.cpp',
+                '\tsetData(nameIndex, *data(fromIndex));\n'
+                '\treturn duplicate ? SetResult::Duplicate : SetResult::Ok;\n'
+                '}',
+                '\tsetData(nameIndex, *data(fromIndex));\n'
+                '\t_identity = NextIdentity();\n'
+                '\treturn duplicate ? SetResult::Duplicate : SetResult::Ok;\n'
+                '}')
+
+          # 31. palette::SwitchMainOverride definition.
+          patch('ui/style/style_core_palette.cpp',
+                'namespace main_palette {\n'
+                'namespace {',
+                SWITCH_DEF
+                + '\nnamespace main_palette {\n'
+                'namespace {')
+
+          # 32. Invalidate the override on main_palette::load.
+          patch('ui/style/style_core_palette.cpp',
+                'bool load(const QByteArray &cache) {\n'
+                '\tif (GetMutable().load(cache)) {',
+                'bool load(const QByteArray &cache) {\n'
+                '\tInvalidateMainOverride();\n'
+                '\tif (GetMutable().load(cache)) {')
+
+          # 33. Invalidate the override on main_palette::setColor.
+          patch('ui/style/style_core_palette.cpp',
+                'palette::SetResult setColor(QLatin1String name, uchar r, uchar g, uchar b, uchar a) {\n'
+                '\treturn GetMutable().setColor(name, r, g, b, a);',
+                'palette::SetResult setColor(QLatin1String name, uchar r, uchar g, uchar b, uchar a) {\n'
+                '\tInvalidateMainOverride();\n'
+                '\treturn GetMutable().setColor(name, r, g, b, a);')
+
+          # 34. Invalidate the override on main_palette::setColor from another color.
+          patch('ui/style/style_core_palette.cpp',
+                'palette::SetResult setColor(QLatin1String name, QLatin1String from) {\n'
+                '\treturn GetMutable().setColor(name, from);',
+                'palette::SetResult setColor(QLatin1String name, QLatin1String from) {\n'
+                '\tInvalidateMainOverride();\n'
+                '\treturn GetMutable().setColor(name, from);')
+
+          # 35. Invalidate the override on main_palette::apply.
+          patch('ui/style/style_core_palette.cpp',
+                'void apply(const palette &other) {\n'
+                '\tGetMutable() = other;',
+                'void apply(const palette &other) {\n'
+                '\tInvalidateMainOverride();\n'
+                '\tGetMutable() = other;')
+
+          # 36. Invalidate the override on main_palette::reset.
+          patch('ui/style/style_core_palette.cpp',
+                'void reset() {\n'
+                '\tGetMutable().reset();',
+                'void reset() {\n'
+                '\tInvalidateMainOverride();\n'
+                '\tGetMutable().reset();')
+
+          # 37. Invalidate the override on main_palette::reset with a colorizer.
+          patch('ui/style/style_core_palette.cpp',
+                'void reset(const colorizer &with) {\n'
+                '\tGetMutable().reset(with);',
+                'void reset(const colorizer &with) {\n'
+                '\tInvalidateMainOverride();\n'
+                '\tGetMutable().reset(with);')
+
+          # 38. main_palette::Override + CurrentOverrideIdentity definitions.
+          patch('ui/style/style_core_palette.cpp',
+                'int indexOfColor(color c) {\n'
+                '\treturn GetMutable().indexOfColor(c);\n'
+                '}\n\n'
+                '} // namespace main_palette',
+                'int indexOfColor(color c) {\n'
+                '\treturn GetMutable().indexOfColor(c);\n'
+                '}\n\n'
+                + OVERRIDE_DEF
+                + '\n} // namespace main_palette')
+
+          # 39. PopupMenu::refreshAnimationCache declaration.
+          patch('ui/widgets/popup_menu.h',
+                '\tvoid hideMenu(bool fast = false);\n',
+                '\tvoid hideMenu(bool fast = false);\n'
+                '\tvoid refreshAnimationCache();\n')
+
+          # 40. PopupMenu::focusNextPrevChild declaration.
+          patch('ui/widgets/popup_menu.h',
+                '\tbool eventFilter(QObject *o, QEvent *e) override;\n',
+                '\tbool eventFilter(QObject *o, QEvent *e) override;\n'
+                '\tbool focusNextPrevChild(bool next) override;\n')
+
+          # 41. PopupMenu::prepareShowAnimation declaration.
+          patch('ui/widgets/popup_menu.h',
+                '\tQImage grabForPanelAnimation();\n'
+                '\tvoid startShowAnimation();\n',
+                '\tQImage grabForPanelAnimation();\n'
+                '\tvoid prepareShowAnimation();\n'
+                '\tvoid startShowAnimation();\n')
+
+          # 42. PopupMenu animation-cache refresh flag.
+          patch('ui/widgets/popup_menu.h',
+                '\tbool _grabbingForPanelAnimation = false;\n',
+                '\tbool _grabbingForPanelAnimation = false;\n'
+                '\tbool _refreshingAnimationCache = false;\n')
+
+          # 43. Child-state helpers for the animation-cache refresh.
+          patch('ui/widgets/popup_menu.cpp',
+                '\treturn !negative || !positive;\n'
+                '}\n\n'
+                '} // namespace\n',
+                '\treturn !negative || !positive;\n'
+                '}\n\n'
+                + CHILD_HELPERS
+                + '} // namespace\n')
+
+          # 44. PopupMenu::focusNextPrevChild definition.
+          patch('ui/widgets/popup_menu.cpp',
+                'void PopupMenu::hideMenu(bool fast) {',
+                'bool PopupMenu::focusNextPrevChild(bool next) {\n'
+                '\treturn !_refreshingAnimationCache && RpWidget::focusNextPrevChild(next);\n'
+                '}\n\n'
+                'void PopupMenu::hideMenu(bool fast) {')
+
+          # 45. PopupMenu::startShowAnimation uses prepareShowAnimation.
+          patch('ui/widgets/popup_menu.cpp',
+                '\tif (!_a_show.animating()) {\n'
+                '\t\tauto opacityAnimation = base::take(_a_opacity);\n'
+                '\t\tshowChildren();\n'
+                '\t\tauto cache = grabForPanelAnimation();\n'
+                '\t\t_a_opacity = base::take(opacityAnimation);\n\n'
+                '\t\tconst auto pixelRatio = style::DevicePixelRatio();\n'
+                '\t\t_showAnimation = std::make_unique<PanelAnimation>(_st.animation, _origin);\n'
+                '\t\t_showAnimation->setFinalImage(std::move(cache), QRect(_inner.topLeft() * pixelRatio, _inner.size() * pixelRatio), _st.radius);\n'
+                '\t\tif (_useTransparency) {\n'
+                '\t\t\t_showAnimation->setCornerMasks(Images::CornersMask(_st.radius));\n'
+                '\t\t} else {\n'
+                '\t\t\t_showAnimation->setSkipShadow(true);\n'
+                '\t\t}\n'
+                '\t\t_showAnimation->start();\n'
+                '\t}\n',
+                '\tif (!_a_show.animating()) {\n'
+                '\t\tprepareShowAnimation();\n'
+                '\t}\n')
+
+          # 46. PopupMenu::refreshAnimationCache + prepareShowAnimation definitions.
+          patch('ui/widgets/popup_menu.cpp',
+                'void PopupMenu::startShowAnimation() {',
+                REFRESH_DEFS
+                + 'void PopupMenu::startShowAnimation() {')
+
+          print('lib_ui patch complete.')
+          PYEOF
       - name: First set up.
         shell: bash
         run: |
