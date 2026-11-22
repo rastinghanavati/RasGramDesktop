@@ -75,7 +75,9 @@ jobs:
           #!/usr/bin/env python3
           """Patch AyuGram lib_ui (e3d0582) with the upstream Telegram 7.4.5 APIs it
           lacks. Insertions only, except two one-line behaviour ports. Every anchor
-          must occur exactly once or the step fails."""
+          must occur exactly once or the step fails. Files are normalized
+          to LF line endings first: the Windows runner checks them out as
+          CRLF, and the anchors use \n only."""
           import sys
 
           BASE = sys.argv[1]
@@ -85,6 +87,11 @@ jobs:
               path = BASE + '/' + rel
               with open(path, encoding='utf-8', newline='') as f:
                   text = f.read()
+              crlf = text.count('\r')
+              if crlf:
+                  print('normalized ' + str(crlf)
+                        + ' CR line endings in ' + rel)
+              text = text.replace('\r\n', '\n').replace('\r', '\n')
               count = text.count(old)
               if count != 1:
                   print('FAIL: ' + rel + ': anchor found '
