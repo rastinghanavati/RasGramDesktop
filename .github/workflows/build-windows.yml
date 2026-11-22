@@ -148,6 +148,13 @@ jobs:
                 '\t\tr.moveTop(r.top() + placeholderTop);',
                 '\t\tr.translate(placeholderLeft, placeholderTop);')
 
+          # 7. IconButtonWithText::fittingFont declaration in the header.
+          # The earlier patch added the definition to the .cpp but not the
+          # declaration, so MSVC reported C2039 (run 45011499669).
+          patch('ui/widgets/icon_button_with_text.h',
+                '\tconst style::IconButtonWithText &_st;',
+                '\t[[nodiscard]] style::font fittingFont(int width) const;\n\n\tconst style::IconButtonWithText &_st;')
+
           print('lib_ui patch complete.')
           PYEOF
 
