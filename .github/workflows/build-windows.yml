@@ -164,6 +164,96 @@ jobs:
           print('lib_ui patch complete.')
           PYEOF
 
+      - name: Patch lib_ui for Telegram 7.4.5 GL option (ForceANGLE).
+        shell: bash
+        run: |
+          set -euo pipefail
+          UI="$TBUILD/$REPO_NAME/Telegram/lib_ui"
+          python3 - "$UI" <<'PYEOF'
+          #!/usr/bin/env python3
+          """Patch AyuGram lib_ui (e3d0582) with the upstream Telegram 7.4.5 GL
+          option it lacks: Ui::GL::kOptionForceANGLE, used by the main Telegram
+          7.4.5 sources (settings_experimental.cpp, run 45066267989: C2039 /
+          C2065). Ported verbatim from desktop-app/lib_ui@562381f
+          ui/gl/gl_detection.h and ui/gl/gl_detection.cpp: the declaration,
+          the "force-angle" definition and the OptionForceANGLE toggle
+          registration. Insertions only. Every anchor must occur exactly once
+          or the step fails. Files are normalized to LF line endings first:
+          the Windows runner checks them out as CRLF, and the anchors use
+          \\n only. The widened DESKTOP_APP_USE_ANGLE condition from upstream
+          is deliberately not ported: nothing in this build defines
+          DESKTOP_APP_QT6_ANGLE, so the toggle stays scoped off on Qt 6,
+          exactly as upstream behaves without an ANGLE-enabled Qt."""
+          import sys
+
+          BASE = sys.argv[1]
+
+
+          def patch(rel, old, new):
+              path = BASE + '/' + rel
+              with open(path, encoding='utf-8', newline='') as f:
+                  text = f.read()
+              crlf = text.count('\r')
+              if crlf:
+                  print('normalized ' + str(crlf)
+                        + ' CR line endings in ' + rel)
+              text = text.replace('\r\n', '\n').replace('\r', '\n')
+              count = text.count(old)
+              if count != 1:
+                  print('FAIL: ' + rel + ': anchor found '
+                        + str(count) + ' times (expected 1): ' + repr(old[:80]))
+                  sys.exit(1)
+              with open(path, 'w', encoding='utf-8', newline='') as f:
+                  f.write(text.replace(old, new))
+              print('patched ' + rel)
+
+
+          # 1. Ui::GL::kOptionForceANGLE declaration.
+          patch('ui/gl/gl_detection.h',
+                'extern const char kOptionUseQtRhi[];\n'
+                'extern const char kOptionEnableVulkanRhi[];\n',
+                'extern const char kOptionUseQtRhi[];\n'
+                'extern const char kOptionForceANGLE[];\n'
+                'extern const char kOptionEnableVulkanRhi[];\n')
+
+          # 2. OptionForceANGLE toggle registration (upstream verbatim).
+          patch('ui/gl/gl_detection.cpp',
+                '\t.restartRequired = true,\n'
+                '});\n'
+                '\n'
+                '[[nodiscard]] bool VulkanRhiAvailable() {\n',
+                '\t.restartRequired = true,\n'
+                '});\n'
+                '\n'
+                'base::options::toggle OptionForceANGLE({\n'
+                '\t.id = kOptionForceANGLE,\n'
+                '\t.name = "Force ANGLE renderer",\n'
+                '\t.description = "Use ANGLE for accelerated media and calls. "\n'
+                '\t\t"Render the main window on the CPU.",\n'
+                '\t.defaultValue = false,\n'
+                '\t.scope = [] {\n'
+                '#if defined DESKTOP_APP_USE_ANGLE && QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)\n'
+                '\t\treturn true;\n'
+                '#else\n'
+                '\t\treturn false;\n'
+                '#endif\n'
+                '\t},\n'
+                '\t.restartRequired = true,\n'
+                '});\n'
+                '\n'
+                '[[nodiscard]] bool VulkanRhiAvailable() {\n')
+
+          # 3. kOptionForceANGLE definition.
+          patch('ui/gl/gl_detection.cpp',
+                'const char kOptionUseQtRhi[] = "use-qt-rhi";\n'
+                'const char kOptionEnableVulkanRhi[] = "enable-vulkan-rhi";\n',
+                'const char kOptionUseQtRhi[] = "use-qt-rhi";\n'
+                'const char kOptionForceANGLE[] = "force-angle";\n'
+                'const char kOptionEnableVulkanRhi[] = "enable-vulkan-rhi";\n')
+
+          print('lib_ui ForceANGLE patch complete.')
+          PYEOF
+
       - name: Patch lib_ui for Telegram 7.4.5 UI APIs (SettingsButton, SeparatePanel, palette Override, BaseDpi, PopupMenu).
         shell: bash
         run: |
@@ -1800,7 +1890,10 @@ jobs:
           -D DESKTOP_APP_DISABLE_CRASH_REPORTS=OFF ^
           -D CMAKE_MSVC_DEBUG_INFORMATION_FORMAT=
 
-          cmake --build ..\out --config Release --target Telegram --parallel
+          rem Limit to 2 parallel projects: with unbounded parallelism the
+          Telegram target's huge PCH exhausts the runner's memory and the
+          build dies with C3859/C1060 in runs 45050855213 and 45066267989.
+          cmake --build ..\out --config Release --target Telegram --parallel 2
 
       - name: Verify build.
         run: |
