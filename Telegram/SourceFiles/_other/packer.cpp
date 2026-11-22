@@ -48,7 +48,8 @@ w/CVnbwQOw0g5GBwwFV3r0uTTvy44xx8XXxk+Qknu4eBCsmrAFNnAgMBAAE=\n\
 #ifndef PACKER_DISABLE_PRIVATE
 extern const char *PrivateKey;
 extern const char *PrivateBetaKey;
-#include "packer_private.h" // RSA PRIVATE KEYS for update signing
+#include "../../../../DesktopPrivate/packer_private.h" // RSA PRIVATE KEYS for update signing
+#include "../../../../DesktopPrivate/alpha_private.h" // private key for alpha version file generation
 #else // PACKER_DISABLE_PRIVATE
 // V2 packing needs no DesktopPrivate keys: the empty stubs make the v1
 // path fail with a clear error instead of signing with a wrong key.
