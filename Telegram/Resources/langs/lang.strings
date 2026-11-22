@@ -3842,6 +3842,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_chat_link_description" = "Add a message that will be entered in the message field for anyone who starts a chat with you using this link.";
 "lng_chat_link_placeholder" = "Add Preset Message";
 "lng_chat_link_saved" = "Chat link saved.";
+"lng_chat_link_copy" = "Copy";
 "lng_chat_link_share" = "Share";
 "lng_chat_link_name" = "Link Name (optional)";
 "lng_chat_link_delete_sure" = "Are you sure you want to delete this chat link?";
@@ -7506,6 +7507,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_translate_box_error" = "Translate failed.";
 "lng_translate_box_error_language_pack_not_installed" = "Translation requires a local language pack. Download it in System Settings.";
 
+"lng_translate_settings_subtitle" = "Translate Messages";
 "lng_translate_settings_show" = "Show Translate Button";
 "lng_translate_settings_use_platform_mac" = "Use Apple Translations";
 "lng_translate_settings_use_platform_mac_about" = "Translation on macOS won't work until you download local language packs in System Settings.";

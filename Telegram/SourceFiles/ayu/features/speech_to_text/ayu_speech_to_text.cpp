@@ -8,6 +8,7 @@
 
 #include "ayu/ayu_settings.h"
 #include "lang/lang_keys.h"
+#include "media/audio/media_audio_capture_common.h"
 
 #include <QtCore/QJsonArray.h>
 #include <QtCore/QJsonDocument.h>
@@ -321,7 +322,7 @@ void Engine::onReplyFinished(QNetworkReply *reply) {
 	} else if (text.isEmpty()) {
 		_errors.fire(tr::ayu_SpeechToTextFailed(tr::now));
 	} else {
-		_transcribed.fire(text);
+		_transcribed.fire(QString(text));
 	}
 }
 

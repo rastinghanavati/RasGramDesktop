@@ -24,11 +24,16 @@ namespace Ui::Earn {
 [[nodiscard]] QImage IconCurrencyTwoTone(
 	const style::font &font,
 	const QColor &c);
+[[nodiscard]] QImage IconCurrencyColored(int size, const QColor &c);
+[[nodiscard]] QImage IconCurrencyColored(
+	const style::font &font,
+	const QColor &c);
 [[nodiscard]] float64 AlignedMarkTop(
 	const style::font &font,
 	const QImage &image);
 [[nodiscard]] QByteArray CurrencySvgMono(const QColor &c);
 [[nodiscard]] QByteArray CurrencySvgTwoTone(const QColor &c);
+[[nodiscard]] QByteArray CurrencySvgColored(const QColor &c);
 
 [[nodiscard]] QImage MenuIconCurrency(const QSize &size);
 [[nodiscard]] QImage MenuIconCredits();

@@ -7,7 +7,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include "ui/wrap/vertical_layout.h"
+
 class PeerData;
+
+namespace Info {
+class Controller;
+} // namespace Info
 
 namespace Info::Saved {
 

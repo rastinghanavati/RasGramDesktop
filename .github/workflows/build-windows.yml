@@ -1079,6 +1079,619 @@ jobs:
 
           print('lib_ui IV patch complete.')
           PYEOF
+      - name: Patch lib_ui for Telegram 7.4.5 APIs (accessibility, touch scroll, GL, window commands).
+        shell: bash
+        run: |
+          set -euo pipefail
+          UI="$TBUILD/$REPO_NAME/Telegram/lib_ui"
+          curl -fsSL "https://raw.githubusercontent.com/desktop-app/lib_ui/562381f7537c60a2bec7b0fea37bdb14392bfbf3/ui/wrap/vertical_blocks.h" -o "$UI/ui/wrap/vertical_blocks.h"
+          echo "d78b442b71488109e4720e831fa98b0a7c781a404e997c5a4028c9a6b652ba73  $UI/ui/wrap/vertical_blocks.h" | sha256sum -c -
+          curl -fsSL "https://raw.githubusercontent.com/desktop-app/lib_ui/562381f7537c60a2bec7b0fea37bdb14392bfbf3/ui/wrap/vertical_blocks.cpp" -o "$UI/ui/wrap/vertical_blocks.cpp"
+          echo "1e2a4897bd623688745c5c007c3b0b274a3e28ae8dd4e2982429908475b01e26  $UI/ui/wrap/vertical_blocks.cpp" | sha256sum -c -
+          curl -fsSL "https://raw.githubusercontent.com/desktop-app/lib_ui/562381f7537c60a2bec7b0fea37bdb14392bfbf3/ui/basic_click_handlers.h" -o "$UI/ui/basic_click_handlers.h"
+          echo "fb6f62c9770228f77316529229ab9c54e1b27e4b90e307776785e6afe104e98f  $UI/ui/basic_click_handlers.h" | sha256sum -c -
+          curl -fsSL "https://raw.githubusercontent.com/desktop-app/lib_ui/562381f7537c60a2bec7b0fea37bdb14392bfbf3/ui/basic_click_handlers.cpp" -o "$UI/ui/basic_click_handlers.cpp"
+          echo "975be59a38ed35186af1060e4c5f6dd2a159a2e6b9a366b16c9b0fd36c308044  $UI/ui/basic_click_handlers.cpp" | sha256sum -c -
+          python3 - "$UI" <<'PYEOF'
+          #!/usr/bin/env python3
+          """Patch AyuGram lib_ui (e3d0582) with the upstream Telegram 7.4.5 APIs it
+          lacks, needed by the main Telegram 7.4.5 sources: RpWidget accessibility
+          (accessibilityChildRoleAt, accessibilityChildSelectionChanged,
+          accessibilityChildShowMenu), ElasticScroll touch scrolling
+          (touchScrollBy/Release/Finish, WheelSource, absorbBottomOverscroll),
+          Ui::GL NV12 helpers (TwoComponentTextureFormat, FragmentSampleNV12Texture
+          with chroma format), Ui::Platform system commands and native maximized
+          state, Images::IsSvgFormat, Ui::GenericBox::setMinimalTopSkip, and the
+          new ui/wrap/vertical_blocks files plus the reworked
+          ui/basic_click_handlers files (SuspiciousRanges). Insertions only,
+          except the ElasticScroll wheel-event rework, the GL shader block, and
+          the ComputeScrollTo removal (now in scroll_math.h via the IV step).
+          Every anchor must occur exactly once or the step fails. Files are
+          normalized to LF line endings first: the Windows runner checks them
+          out as CRLF, and the anchors use \n only."""
+          import sys
+
+          BASE = sys.argv[1]
+
+
+          def patch(rel, old, new):
+              path = BASE + '/' + rel
+              with open(path, encoding='utf-8', newline='') as f:
+                  text = f.read()
+              crlf = text.count('\r')
+              if crlf:
+                  print('normalized ' + str(crlf)
+                        + ' CR line endings in ' + rel)
+              text = text.replace('\r\n', '\n').replace('\r', '\n')
+              count = text.count(old)
+              if count != 1:
+                  print('FAIL: ' + rel + ': anchor found '
+                        + str(count) + ' times (expected 1): ' + repr(old[:80]))
+                  sys.exit(1)
+              with open(path, 'w', encoding='utf-8', newline='') as f:
+                  f.write(text.replace(old, new))
+              print('patched ' + rel)
+
+
+          GL_SHADER_OLD = 'QString FragmentYUV2RGB() {\n\treturn R"(\n\tresult = vec4(\n'
+          '\t\t1.164 * y + 1.596 * v,\n\t\t1.164 * y - 0.392 * u - 0.813 * v,\n'
+          '\t\t1.164 * y + 2.017 * u,\n\t\t1.);\n)";\n}\n\nShaderPart FragmentSampleYUV420Texture() {\n'
+          '\treturn {\n\t\t.header = R"(\nvarying vec2 v_texcoord;\nuniform sampler2D y_texture;\n'
+          'uniform sampler2D u_texture;\nuniform sampler2D v_texture;\n'
+          ')",\n\t\t.body = R"(\n\tfloat y = texture2D(y_texture, v_texcoord).a - 0.0625;\n'
+          '\tfloat u = texture2D(u_texture, v_texcoord).a - 0.5;\n\tfloat v = texture2D(v_texture, v_texcoord).'
+          'a - 0.5;\n)" + FragmentYUV2RGB(),\n\t};\n}\n\nShaderPart FragmentSampleNV12Texture() {\n'
+          '\treturn {\n\t\t.header = R"(\nvarying vec2 v_texcoord;\nuniform sampler2D y_texture;\n'
+          'uniform sampler2D uv_texture;\n)",\n\t\t.body = R"(\n\tfloat y = texture2D(y_texture, v_texcoord).a '
+          '- 0.0625;\n\tvec2 uv = texture2D(uv_texture, v_texcoord).rg - vec2(0.5, 0.5);\n'
+          '\tfloat u = uv.x;\n\tfloat v = uv.y;\n)" + FragmentYUV2RGB(),\n'
+          '\t};\n}\n'
+
+          GL_SHADER_NEW = 'QString FragmentYUV2RGB(bool colorMatrix) {\n\treturn colorMatrix\n'
+          '\t\t? R"(\n\tresult = yuvToRgb * vec4(y, u, v, 1.);\n)"\n\t\t: R"(\n'
+          '\ty -= 0.0625;\n\tu -= 0.5;\n\tv -= 0.5;\n\tresult = vec4(\n'
+          '\t\t1.164 * y + 1.596 * v,\n\t\t1.164 * y - 0.392 * u - 0.813 * v,\n'
+          '\t\t1.164 * y + 2.017 * u,\n\t\t1.);\n)";\n}\n\nShaderPart FragmentSampleYUV420Texture(bool colorMat'
+          'rix) {\n\treturn {\n\t\t.header = R"(\nvarying vec2 v_texcoord;\n'
+          'uniform sampler2D y_texture;\nuniform sampler2D u_texture;\n'
+          'uniform sampler2D v_texture;\n)" + (colorMatrix ? R"(uniform mat4 yuvToRgb;\n'
+          ')" : QString()),\n\t\t.body = R"(\n\tfloat y = texture2D(y_texture, v_texcoord).a;\n'
+          '\tfloat u = texture2D(u_texture, v_texcoord).a;\n\tfloat v = texture2D(v_texture, v_texcoord).a;\n'
+          ')" + FragmentYUV2RGB(colorMatrix),\n\t};\n}\n\nShaderPart FragmentSampleNV12Texture(GLenum chromaFor'
+          'mat, bool colorMatrix) {\n\tExpects(chromaFormat == GL_RG || chromaFormat == GL_LUMINANCE_ALPHA);\n'
+          '\n\tconst auto channels = (chromaFormat == GL_RG) ? u"rg"_q : u"ra"_q;\n'
+          '\treturn {\n\t\t.header = R"(\nvarying vec2 v_texcoord;\nuniform sampler2D y_texture;\n'
+          'uniform sampler2D uv_texture;\n)" + (colorMatrix ? R"(uniform mat4 yuvToRgb;\n'
+          ')" : QString()),\n\t\t.body = R"(\n\tfloat y = texture2D(y_texture, v_texcoord).a;\n'
+          '\tvec2 uv = texture2D(uv_texture, v_texcoord).)" + channels + R"(;\n'
+          '\tfloat u = uv.x;\n\tfloat v = uv.y;\n)" + FragmentYUV2RGB(colorMatrix),\n'
+          '\t};\n}\n'
+
+          TOUCH_METHODS = 'bool ElasticScroll::touchScrollBy(QPoint delta, bool pressed) {\n'
+          '\t// The core takes opposite momentum in a spring for a lost begin.\n'
+          '\tif (_disabled\n\t\t|| (!pressed && (!_touchOwnerGesture || _overscrollReturning))) {\n'
+          '\t\treturn false;\n\t}\n\tconst auto was = position();\n\tconst auto weak = base::make_weak(this);\n'
+          '\tif (pressed && !_touchOwnerGesture) {\n\t\t_touchOwnerGesture = true;\n'
+          '\t\tsendWheelEvent(Qt::ScrollBegin, {}, WheelSource::ExactTouch);\n'
+          '\t\tif (!weak) {\n\t\t\treturn false;\n\t\t}\n\t}\n\tsendWheelEvent(\n'
+          '\t\tpressed ? Qt::ScrollUpdate : Qt::ScrollMomentum,\n\t\tdelta,\n'
+          '\t\tWheelSource::ExactTouch);\n\treturn weak && (position() != was);\n'
+          '}\n\nvoid ElasticScroll::touchScrollRelease() {\n\tif (_touchOwnerGesture) {\n'
+          '\t\tsendWheelEvent(Qt::ScrollMomentum, {}, WheelSource::ExactTouch);\n'
+          '\t}\n}\n\nvoid ElasticScroll::touchScrollFinish(bool cancelled) {\n'
+          '\tif (!_touchOwnerGesture) {\n\t\treturn;\n\t}\n\t_touchOwnerGesture = false;\n'
+          '\tconst auto stretch = _overscroll - currentOverscrollDefault();\n'
+          '\tif (cancelled && stretch && !_overscrollReturning) {\n\t\t// WHY: unwinding the held stretch while'
+          ' still in Progress drops\n\t\t// the pull before the terminal phase, so a cancel never commits.\n'
+          '\t\tconst auto weak = base::make_weak(this);\n\t\tsendWheelEvent(\n'
+          '\t\t\tQt::ScrollUpdate,\n\t\t\t_vertical ? QPoint(0, stretch) : QPoint(stretch, 0),\n'
+          '\t\t\tWheelSource::ExactTouch);\n\t\tif (!weak) {\n\t\t\treturn;\n'
+          '\t\t}\n\t}\n\tsendWheelEvent(Qt::ScrollEnd, {}, WheelSource::ExactTouch);\n'
+          '}\n\n'
+
+          ABSORB_DEF = 'void ElasticScroll::absorbBottomOverscroll(int position) {\n'
+          '\tconst auto absorbable = [&] {\n\t\treturn !_disabled\n\t\t\t&& _widget\n'
+          '\t\t\t&& (_overscroll > 0)\n\t\t\t&& (_overscrollTypeTill == OverscrollType::Real)\n'
+          '\t\t\t&& !_overscrollDefaultTill\n\t\t\t&& !overscrollPullSide(1);\n'
+          '\t};\n\tif (!absorbable()) {\n\t\treturn;\n\t}\n\tconst auto weak = base::make_weak(this);\n'
+          '\tSendPendingMoveResizeEvents(_widget.data());\n\tif (!weak) {\n'
+          '\t\treturn;\n\t}\n\tSendPendingMoveResizeEvents(this);\n\tif (!weak || !absorbable()) {\n'
+          '\t\treturn;\n\t}\n\tconst auto edge = lookupOverscrollPinnedEdge();\n'
+          '\tconst auto remaining = edge ? (position - *edge) : -1;\n\tif (remaining < 0 || remaining >= _overs'
+          'croll) {\n\t\treturn;\n\t}\n\tconst auto returning = _overscrollReturning\n'
+          '\t\t&& (_springSide > 0)\n\t\t&& _overscrollReturnAnimation.animating();\n'
+          '\tif (returning) {\n\t\tif (!remaining) {\n\t\t\toverscrollSpringFinish();\n'
+          '\t\t\treturn;\n\t\t}\n\t\t// The spring is linear in (x0, v0): scaled, it keeps its clock.\n'
+          '\t\tconst auto ratio = float64(remaining) / _overscroll;\n\t\t_springX0 *= ratio;\n'
+          '\t\t_springV0 *= ratio;\n\t}\n\t_overscrollAccumulated = currentOverscrollDefaultAccumulated()\n'
+          '\t\t+ overscrollToAccumulated(1, remaining);\n\tapplyOverscroll(remaining);\n'
+          '}\n\n'
+
+          # 1. CMakeLists.txt.
+          patch('CMakeLists.txt',
+                '    ui/wrap/table_layout.h\n    ui/wrap/vertical_layout.cpp\n',
+                '    ui/wrap/table_layout.h\n    ui/wrap/vertical_blocks.cpp\n'
+                '    ui/wrap/vertical_blocks.h\n    ui/wrap/vertical_layout.cpp\n')
+
+          # 2. ui/rp_widget.h.
+          patch('ui/rp_widget.h',
+                '\tvoid accessibilityChildStateChanged(int index, AccessibilityState changes);\n'
+                '\t[[nodiscard]] virtual QAccessible::Role accessibilityChildRole() const;\n',
+                '\tvoid accessibilityChildStateChanged(int index, AccessibilityState changes);\n'
+                '\t// Replaces the selected-state notification after the owner updates its state.\n'
+                '\tvoid accessibilityChildSelectionChanged(int index);\n\t[[nodiscard]] virtual QAccessible::Role acc'
+                'essibilityChildRole() const;\n')
+
+          # 3. ui/rp_widget.h.
+          patch('ui/rp_widget.h',
+                '\t[[nodiscard]] virtual QAccessible::Role accessibilityChildRole() const;\n'
+                '\t[[nodiscard]] virtual QRect accessibilityChildRect(int index) const;\n',
+                '\t[[nodiscard]] virtual QAccessible::Role accessibilityChildRole() const;\n'
+                '\n\t// The role of one child where it differs from the list-wide one above:\n'
+                '\t// a divider row between the items of a list is a Separator, not one\n'
+                '\t// more item. Defaults to accessibilityChildRole().\n\t[[nodiscard]] virtual QAccessible::Role acc'
+                'essibilityChildRoleAt(\n\t\tint index) const;\n\n\t[[nodiscard]] virtual QRect accessibilityChildRec'
+                't(int index) const;\n')
+
+          # 4. ui/rp_widget.h.
+          patch('ui/rp_widget.h',
+                '\tvirtual void accessibilityChildActivate(quintptr identity);\n',
+                '\tvirtual void accessibilityChildActivate(quintptr identity);\n'
+                '\n\t// The showMenu action of a child that reports itself expandable: the\n'
+                '\t// assistive technology expands it with it when collapsed, and\n'
+                '\t// collapses it when expanded - a picker of variants opened over an\n'
+                '\t// item, say. Advertised only with the expandable state.\n'
+                '\tvirtual void accessibilityChildShowMenu(quintptr identity);\n')
+
+          # 5. ui/rp_widget.cpp.
+          patch('ui/rp_widget.cpp',
+                'QAccessible::Role RpWidget::accessibilityChildRole() const {\n'
+                '\treturn QAccessible::Role::NoRole;\n}\n\nQString RpWidget::accessibilityChildName(int index) const '
+                '{\n',
+                'QAccessible::Role RpWidget::accessibilityChildRole() const {\n'
+                '\treturn QAccessible::Role::NoRole;\n}\n\nQAccessible::Role RpWidget::accessibilityChildRoleAt(int i'
+                'ndex) const {\n\treturn accessibilityChildRole();\n}\n\nQString RpWidget::accessibilityChildName(int'
+                ' index) const {\n')
+
+          # 6. ui/rp_widget.cpp.
+          patch('ui/rp_widget.cpp',
+                'void RpWidget::accessibilityChildStateChanged(\n\t\tint index,\n'
+                '\t\tAccessibilityState changes) {\n\tauto fields = QAccessible::State();\n'
+                '\tchanges.writeTo(fields);\n\tQAccessibleStateChangeEvent event(this, fields);\n'
+                '\tevent.setChild(index);\n\tQAccessible::updateAccessibility(&event);\n'
+                '}\n\nvoid RpWidget::accessibilityChildFocused(int index) {\n',
+                'void RpWidget::accessibilityChildStateChanged(\n\t\tint index,\n'
+                '\t\tAccessibilityState changes) {\n\tauto fields = QAccessible::State();\n'
+                '\tchanges.writeTo(fields);\n\tQAccessibleStateChangeEvent event(this, fields);\n'
+                '\tevent.setChild(index);\n\tQAccessible::updateAccessibility(&event);\n'
+                '}\n\nvoid RpWidget::accessibilityChildSelectionChanged(int index) {\n'
+                '\tif constexpr (Platform::IsLinux()) {\n\t\tQAccessibleEvent event(this, accessibilityChildState(ind'
+                'ex).selected\n\t\t\t? QAccessible::SelectionAdd\n\t\t\t: QAccessible::SelectionRemove);\n'
+                '\t\tevent.setChild(index);\n\t\tQAccessible::updateAccessibility(&event);\n'
+                '\t} else {\n\t\taccessibilityChildStateChanged(index, { .selected = true });\n'
+                '\t}\n}\n\nvoid RpWidget::accessibilityChildFocused(int index) {\n')
+
+          # 7. ui/rp_widget.cpp.
+          patch('ui/rp_widget.cpp',
+                'void RpWidget::accessibilityChildActivate(quintptr identity) {\n'
+                '}\n\nQString RpWidget::accessibilityName() {\n',
+                'void RpWidget::accessibilityChildActivate(quintptr identity) {\n'
+                '}\n\nvoid RpWidget::accessibilityChildShowMenu(quintptr identity) {\n'
+                '}\n\nQString RpWidget::accessibilityName() {\n')
+
+          # 8. ui/widgets/elastic_scroll.h.
+          patch('ui/widgets/elastic_scroll.h',
+                '\tvoid lockWheelDirection() {\n\t\t_wheelDirectionLocked = true;\n'
+                '\t}\n',
+                '\tvoid lockWheelDirection() {\n\t\t_wheelDirectionLocked = true;\n'
+                '\t}\n\n\t// For setHandleTouch(false) owners, their deltas are not rescaled.\n'
+                '\tbool touchScrollBy(QPoint delta, bool pressed);\n\tvoid touchScrollRelease();\n'
+                '\tvoid touchScrollFinish(bool cancelled = false);\n')
+
+          # 9. ui/widgets/elastic_scroll.h.
+          patch('ui/widgets/elastic_scroll.h',
+                '\tvoid returnToOverscrollDefaults();\n',
+                '\tvoid returnToOverscrollDefaults();\n\t// Shrinks a plain bottom bounce so the content stays at tha'
+                't position.\n\tvoid absorbBottomOverscroll(int position);\n')
+
+          # 10. ui/widgets/elastic_scroll.h.
+          patch('ui/widgets/elastic_scroll.h',
+                'private:\n\tbool eventHook(QEvent *e) override;\n',
+                'private:\n\tenum class WheelSource : uchar {\n\t\tWheel,\n\t\tTouch,\n'
+                '\t\tExactTouch,\n\t};\n\n\tbool eventHook(QEvent *e) override;\n')
+
+          # 11. ui/widgets/elastic_scroll.h.
+          patch('ui/widgets/elastic_scroll.h',
+                '\tbool handleWheelEvent(not_null<QWheelEvent*> e, bool touch = false);\n',
+                '\tbool handleWheelEvent(\n\t\tnot_null<QWheelEvent*> e,\n\t\tWheelSource source = WheelSource::Wheel'
+                ');\n')
+
+          # 12. ui/widgets/elastic_scroll.h.
+          patch('ui/widgets/elastic_scroll.h',
+                '\tvoid sendWheelEvent(Qt::ScrollPhase phase, QPoint delta = {});\n',
+                '\tvoid sendWheelEvent(\n\t\tQt::ScrollPhase phase,\n\t\tQPoint delta = {},\n'
+                '\t\tWheelSource source = WheelSource::Touch);\n')
+
+          # 13. ui/widgets/elastic_scroll.h.
+          patch('ui/widgets/elastic_scroll.h',
+                '\tbool _insideBottomContentRequest : 1 = false;\n',
+                '\tbool _insideBottomContentRequest : 1 = false;\n\tbool _touchOwnerGesture : 1 = false;\n')
+
+          # 14. ui/widgets/elastic_scroll.cpp.
+          patch('ui/widgets/elastic_scroll.cpp',
+                '#include "ui/widgets/elastic_scroll.h"\n\n#include "ui/painter.h"\n',
+                '#include "ui/widgets/elastic_scroll.h"\n\n#include "ui/widgets/scroll_math.h"\n'
+                '#include "ui/painter.h"\n')
+
+          # 15. ui/widgets/elastic_scroll.cpp.
+          patch('ui/widgets/elastic_scroll.cpp',
+                '[[nodiscard]] int ComputeScrollTo(\n\t\tint toFrom,\n\t\tint toTill,\n'
+                '\t\tint toMin,\n\t\tint toMax,\n\t\tint current,\n\t\tint size) {\n'
+                '\tif (toFrom < toMin) {\n\t\ttoFrom = toMin;\n\t} else if (toFrom > toMax) {\n'
+                '\t\ttoFrom = toMax;\n\t}\n\tconst auto exact = (toTill < 0);\n'
+                '\n\tconst auto curBottom = current + size;\n\tauto scToFrom = toFrom;\n'
+                '\tif (!exact && toFrom >= current) {\n\t\tif (toTill < toFrom) {\n'
+                '\t\t\ttoTill = toFrom;\n\t\t}\n\t\tif (toTill <= curBottom) {\n'
+                '\t\t\treturn current;\n\t\t}\n\n\t\tscToFrom = toTill - size;\n'
+                '\t\tif (scToFrom > toFrom) {\n\t\t\tscToFrom = toFrom;\n\t\t}\n'
+                '\t\tif (scToFrom == current) {\n\t\t\treturn current;\n\t\t}\n'
+                '\t} else {\n\t\tscToFrom = toFrom;\n\t}\n\treturn scToFrom;\n'
+                '}\n\n',
+                '')
+
+          # 16. ui/widgets/elastic_scroll.cpp.
+          patch('ui/widgets/elastic_scroll.cpp',
+                'bool ElasticScroll::handleWheelEvent(not_null<QWheelEvent*> e, bool touch) {\n',
+                'bool ElasticScroll::handleWheelEvent(\n\t\tnot_null<QWheelEvent*> e,\n'
+                '\t\tWheelSource source) {\n')
+
+          # 17. ui/widgets/elastic_scroll.cpp.
+          patch('ui/widgets/elastic_scroll.cpp',
+                '\tif (_customWheelProcess\n\t\t&& _customWheelProcess(static_cast<QWheelEvent*>(e.get()))) {\n'
+                '\t\treturn true;\n\t}\n',
+                '\tif (_customWheelProcess\n\t\t&& _customWheelProcess(static_cast<QWheelEvent*>(e.get()))) {\n'
+                '\t\treturn true;\n\t}\n\tconst auto touch = (source != WheelSource::Wheel);\n'
+                '\tconst auto exact = (source == WheelSource::ExactTouch);\n')
+
+          # 18. ui/widgets/elastic_scroll.cpp.
+          patch('ui/widgets/elastic_scroll.cpp',
+                '\t\tconst auto lockDelta = ScrollDeltaF(e, touch);\n',
+                '\t\tconst auto lockDelta = exact\n\t\t\t? QPointF(e->pixelDelta())\n'
+                '\t\t\t: ScrollDeltaF(e, touch);\n')
+
+          # 19. ui/widgets/elastic_scroll.cpp.
+          patch('ui/widgets/elastic_scroll.cpp',
+                '\tauto unmultiplied = ScrollDelta(e, touch);\n',
+                '\tauto unmultiplied = exact ? e->pixelDelta() : ScrollDelta(e, touch);\n')
+
+          # 20. ui/widgets/elastic_scroll.cpp.
+          patch('ui/widgets/elastic_scroll.cpp',
+                '\ttouchUpdateSpeed();\n}\n\nvoid ElasticScroll::disableScroll(bool dis) {\n',
+                '\ttouchUpdateSpeed();\n}\n\nbool ElasticScroll::touchScrollBy(QPoint delta, bool pressed) {\n'
+                '\t// The core takes opposite momentum in a spring for a lost begin.\n'
+                '\tif (_disabled\n\t\t|| (!pressed && (!_touchOwnerGesture || _overscrollReturning))) {\n'
+                '\t\treturn false;\n\t}\n\tconst auto was = position();\n\tconst auto weak = base::make_weak(this);\n'
+                '\tif (pressed && !_touchOwnerGesture) {\n\t\t_touchOwnerGesture = true;\n'
+                '\t\tsendWheelEvent(Qt::ScrollBegin, {}, WheelSource::ExactTouch);\n'
+                '\t\tif (!weak) {\n\t\t\treturn false;\n\t\t}\n\t}\n\tsendWheelEvent(\n'
+                '\t\tpressed ? Qt::ScrollUpdate : Qt::ScrollMomentum,\n\t\tdelta,\n'
+                '\t\tWheelSource::ExactTouch);\n\treturn weak && (position() != was);\n'
+                '}\n\nvoid ElasticScroll::touchScrollRelease() {\n\tif (_touchOwnerGesture) {\n'
+                '\t\tsendWheelEvent(Qt::ScrollMomentum, {}, WheelSource::ExactTouch);\n'
+                '\t}\n}\n\nvoid ElasticScroll::touchScrollFinish(bool cancelled) {\n'
+                '\tif (!_touchOwnerGesture) {\n\t\treturn;\n\t}\n\t_touchOwnerGesture = false;\n'
+                '\tconst auto stretch = _overscroll - currentOverscrollDefault();\n'
+                '\tif (cancelled && stretch && !_overscrollReturning) {\n\t\t// WHY: unwinding the held stretch while'
+                ' still in Progress drops\n\t\t// the pull before the terminal phase, so a cancel never commits.\n'
+                '\t\tconst auto weak = base::make_weak(this);\n\t\tsendWheelEvent(\n'
+                '\t\t\tQt::ScrollUpdate,\n\t\t\t_vertical ? QPoint(0, stretch) : QPoint(stretch, 0),\n'
+                '\t\t\tWheelSource::ExactTouch);\n\t\tif (!weak) {\n\t\t\treturn;\n'
+                '\t\t}\n\t}\n\tsendWheelEvent(Qt::ScrollEnd, {}, WheelSource::ExactTouch);\n'
+                '}\n\nvoid ElasticScroll::disableScroll(bool dis) {\n')
+
+          # 21. ui/widgets/elastic_scroll.cpp.
+          patch('ui/widgets/elastic_scroll.cpp',
+                'void ElasticScroll::sendWheelEvent(Qt::ScrollPhase phase, QPoint delta) {\n',
+                'void ElasticScroll::sendWheelEvent(\n\t\tQt::ScrollPhase phase,\n'
+                '\t\tQPoint delta,\n\t\tWheelSource source) {\n')
+
+          # 22. ui/widgets/elastic_scroll.cpp.
+          patch('ui/widgets/elastic_scroll.cpp',
+                '\thandleWheelEvent(&e, true);\n',
+                '\thandleWheelEvent(&e, source);\n')
+
+          # 23. ui/widgets/elastic_scroll.cpp.
+          patch('ui/widgets/elastic_scroll.cpp',
+                'void ElasticScroll::returnToOverscrollDefaults() {\n\toverscrollReturn();\n'
+                '}\n\nvoid ElasticScroll::setOverscrollBg(QColor bg) {\n',
+                'void ElasticScroll::returnToOverscrollDefaults() {\n\toverscrollReturn();\n'
+                '}\n\nvoid ElasticScroll::absorbBottomOverscroll(int position) {\n'
+                '\tconst auto absorbable = [&] {\n\t\treturn !_disabled\n\t\t\t&& _widget\n'
+                '\t\t\t&& (_overscroll > 0)\n\t\t\t&& (_overscrollTypeTill == OverscrollType::Real)\n'
+                '\t\t\t&& !_overscrollDefaultTill\n\t\t\t&& !overscrollPullSide(1);\n'
+                '\t};\n\tif (!absorbable()) {\n\t\treturn;\n\t}\n\tconst auto weak = base::make_weak(this);\n'
+                '\tSendPendingMoveResizeEvents(_widget.data());\n\tif (!weak) {\n'
+                '\t\treturn;\n\t}\n\tSendPendingMoveResizeEvents(this);\n\tif (!weak || !absorbable()) {\n'
+                '\t\treturn;\n\t}\n\tconst auto edge = lookupOverscrollPinnedEdge();\n'
+                '\tconst auto remaining = edge ? (position - *edge) : -1;\n\tif (remaining < 0 || remaining >= _overs'
+                'croll) {\n\t\treturn;\n\t}\n\tconst auto returning = _overscrollReturning\n'
+                '\t\t&& (_springSide > 0)\n\t\t&& _overscrollReturnAnimation.animating();\n'
+                '\tif (returning) {\n\t\tif (!remaining) {\n\t\t\toverscrollSpringFinish();\n'
+                '\t\t\treturn;\n\t\t}\n\t\t// The spring is linear in (x0, v0): scaled, it keeps its clock.\n'
+                '\t\tconst auto ratio = float64(remaining) / _overscroll;\n\t\t_springX0 *= ratio;\n'
+                '\t\t_springV0 *= ratio;\n\t}\n\t_overscrollAccumulated = currentOverscrollDefaultAccumulated()\n'
+                '\t\t+ overscrollToAccumulated(1, remaining);\n\tapplyOverscroll(remaining);\n'
+                '}\n\nvoid ElasticScroll::setOverscrollBg(QColor bg) {\n')
+
+          # 24. ui/widgets/elastic_scroll.cpp.
+          patch('ui/widgets/elastic_scroll.cpp',
+                'void ElasticScroll::doSetOwnedWidget(object_ptr<QWidget> w) {\n'
+                '\tconstexpr auto attribute = Qt::WA_AcceptTouchEvents;\n',
+                'void ElasticScroll::doSetOwnedWidget(object_ptr<QWidget> w) {\n'
+                '\t_touchOwnerGesture = false;\n\tconstexpr auto attribute = Qt::WA_AcceptTouchEvents;\n')
+
+          # 25. ui/gl/gl_image.h.
+          patch('ui/gl/gl_image.h',
+                'namespace Ui::GL {\nnamespace details {\n',
+                'namespace Ui::GL {\n\n[[nodiscard]] GLenum TwoComponentTextureFormat();\n'
+                '\nnamespace details {\n')
+
+          # 26. ui/gl/gl_image.cpp.
+          patch('ui/gl/gl_image.cpp',
+                '#include "ui/gl/gl_image.h"\n\n#include <QtGui/QOpenGLFunctions>\n',
+                '#include "ui/gl/gl_image.h"\n\n#include <QtGui/QOpenGLContext>\n'
+                '#include <QtGui/QOpenGLFunctions>\n')
+
+          # 27. ui/gl/gl_image.cpp.
+          patch('ui/gl/gl_image.cpp',
+                '} // namespace details\n\nvoid Image::setImage(QImage image, QSize subimage) {\n',
+                '} // namespace details\n\nGLenum TwoComponentTextureFormat() {\n'
+                '\tconst auto context = QOpenGLContext::currentContext();\n\tExpects(context != nullptr);\n'
+                '\n\tconst auto supportsRG = (context->format().majorVersion() >= 3)\n'
+                '\t\t|| context->hasExtension("GL_ARB_texture_rg")\n\t\t|| context->hasExtension("GL_EXT_texture_rg")'
+                ';\n\treturn supportsRG ? GL_RG : GL_LUMINANCE_ALPHA;\n}\n\nvoid Image::setImage(QImage image, QSize '
+                'subimage) {\n')
+
+          # 28. ui/gl/gl_shader.h.
+          patch('ui/gl/gl_shader.h',
+                '[[nodiscard]] ShaderPart FragmentSampleYUV420Texture();\n[[nodiscard]] ShaderPart FragmentSampleNV12'
+                'Texture();\n',
+                '[[nodiscard]] ShaderPart FragmentSampleYUV420Texture(bool colorMatrix = false);\n'
+                '[[nodiscard]] ShaderPart FragmentSampleNV12Texture(\n\tGLenum chromaFormat,\n'
+                '\tbool colorMatrix = false);\n')
+
+          # 29. ui/gl/gl_shader.cpp.
+          patch('ui/gl/gl_shader.cpp',
+                'QString FragmentYUV2RGB() {\n\treturn R"(\n\tresult = vec4(\n'
+                '\t\t1.164 * y + 1.596 * v,\n\t\t1.164 * y - 0.392 * u - 0.813 * v,\n'
+                '\t\t1.164 * y + 2.017 * u,\n\t\t1.);\n)";\n}\n\nShaderPart FragmentSampleYUV420Texture() {\n'
+                '\treturn {\n\t\t.header = R"(\nvarying vec2 v_texcoord;\nuniform sampler2D y_texture;\n'
+                'uniform sampler2D u_texture;\nuniform sampler2D v_texture;\n'
+                ')",\n\t\t.body = R"(\n\tfloat y = texture2D(y_texture, v_texcoord).a - 0.0625;\n'
+                '\tfloat u = texture2D(u_texture, v_texcoord).a - 0.5;\n\tfloat v = texture2D(v_texture, v_texcoord).'
+                'a - 0.5;\n)" + FragmentYUV2RGB(),\n\t};\n}\n\nShaderPart FragmentSampleNV12Texture() {\n'
+                '\treturn {\n\t\t.header = R"(\nvarying vec2 v_texcoord;\nuniform sampler2D y_texture;\n'
+                'uniform sampler2D uv_texture;\n)",\n\t\t.body = R"(\n\tfloat y = texture2D(y_texture, v_texcoord).a '
+                '- 0.0625;\n\tvec2 uv = texture2D(uv_texture, v_texcoord).rg - vec2(0.5, 0.5);\n'
+                '\tfloat u = uv.x;\n\tfloat v = uv.y;\n)" + FragmentYUV2RGB(),\n'
+                '\t};\n}\n',
+                'QString FragmentYUV2RGB(bool colorMatrix) {\n\treturn colorMatrix\n'
+                '\t\t? R"(\n\tresult = yuvToRgb * vec4(y, u, v, 1.);\n)"\n\t\t: R"(\n'
+                '\ty -= 0.0625;\n\tu -= 0.5;\n\tv -= 0.5;\n\tresult = vec4(\n'
+                '\t\t1.164 * y + 1.596 * v,\n\t\t1.164 * y - 0.392 * u - 0.813 * v,\n'
+                '\t\t1.164 * y + 2.017 * u,\n\t\t1.);\n)";\n}\n\nShaderPart FragmentSampleYUV420Texture(bool colorMat'
+                'rix) {\n\treturn {\n\t\t.header = R"(\nvarying vec2 v_texcoord;\n'
+                'uniform sampler2D y_texture;\nuniform sampler2D u_texture;\n'
+                'uniform sampler2D v_texture;\n)" + (colorMatrix ? R"(uniform mat4 yuvToRgb;\n'
+                ')" : QString()),\n\t\t.body = R"(\n\tfloat y = texture2D(y_texture, v_texcoord).a;\n'
+                '\tfloat u = texture2D(u_texture, v_texcoord).a;\n\tfloat v = texture2D(v_texture, v_texcoord).a;\n'
+                ')" + FragmentYUV2RGB(colorMatrix),\n\t};\n}\n\nShaderPart FragmentSampleNV12Texture(GLenum chromaFor'
+                'mat, bool colorMatrix) {\n\tExpects(chromaFormat == GL_RG || chromaFormat == GL_LUMINANCE_ALPHA);\n'
+                '\n\tconst auto channels = (chromaFormat == GL_RG) ? u"rg"_q : u"ra"_q;\n'
+                '\treturn {\n\t\t.header = R"(\nvarying vec2 v_texcoord;\nuniform sampler2D y_texture;\n'
+                'uniform sampler2D uv_texture;\n)" + (colorMatrix ? R"(uniform mat4 yuvToRgb;\n'
+                ')" : QString()),\n\t\t.body = R"(\n\tfloat y = texture2D(y_texture, v_texcoord).a;\n'
+                '\tvec2 uv = texture2D(uv_texture, v_texcoord).)" + channels + R"(;\n'
+                '\tfloat u = uv.x;\n\tfloat v = uv.y;\n)" + FragmentYUV2RGB(colorMatrix),\n'
+                '\t};\n}\n')
+
+          # 30. ui/platform/ui_platform_window_title.h.
+          patch('ui/platform/ui_platform_window_title.h',
+                '};\n\n[[nodiscard]] bool SemiNativeSystemButtonProcessing();\n',
+                '};\n\nenum class SystemCommand {\n\tMaximize,\n\tRestore,\n};\n'
+                '\n// System maximize / restore request (Win+Up, system menu) before it is\n'
+                '// applied, handled == true lets window replace it with its own behavior.\n'
+                'struct SystemCommandRequest {\n\tSystemCommand command = SystemCommand::Maximize;\n'
+                '\tbool handled = false;\n};\n\n[[nodiscard]] bool SemiNativeSystemButtonProcessing();\n')
+
+          # 31. ui/widgets/rp_window.h.
+          patch('ui/widgets/rp_window.h',
+                '#include "base/flags.h"\n\nnamespace style {\n',
+                '#include "base/flags.h"\n\nclass QScreen;\n\nnamespace style {\n')
+
+          # 32. ui/widgets/rp_window.h.
+          patch('ui/widgets/rp_window.h',
+                'struct HitTestRequest;\nenum class HitTestResult;\n',
+                'struct HitTestRequest;\nstruct SystemCommandRequest;\nenum class HitTestResult;\n')
+
+          # 33. ui/widgets/rp_window.h.
+          patch('ui/widgets/rp_window.h',
+                '\t[[nodiscard]] QMargins frameMargins() const;\n',
+                '\t[[nodiscard]] QMargins frameMargins() const;\n\t[[nodiscard]] QRect fitFrameInWorkArea(\n'
+                '\t\tQRect body,\n\t\tQRect space,\n\t\tnot_null<const QScreen*> screen) const;\n')
+
+          # 34. ui/widgets/rp_window.h.
+          patch('ui/widgets/rp_window.h',
+                '\t[[nodiscard]] auto systemButtonDown() const\n\t\t-> rpl::producer<Platform::HitTestResult>;\n',
+                '\t[[nodiscard]] auto systemButtonDown() const\n\t\t-> rpl::producer<Platform::HitTestResult>;\n'
+                '\t[[nodiscard]] auto systemCommandRequests() const\n\t\t-> rpl::producer<not_null<Platform::SystemCo'
+                'mmandRequest*>>;\n')
+
+          # 35. ui/widgets/rp_window.cpp.
+          patch('ui/widgets/rp_window.cpp',
+                'QMargins RpWindow::frameMargins() const {\n\treturn _helper->frameMargins();\n'
+                '}\n',
+                'QMargins RpWindow::frameMargins() const {\n\treturn _helper->frameMargins();\n'
+                '}\n\nQRect RpWindow::fitFrameInWorkArea(\n\t\tQRect body,\n\t\tQRect space,\n'
+                '\t\tnot_null<const QScreen*> screen) const {\n\treturn _helper->fitFrameInWorkArea(body, space, scre'
+                'en);\n}\n')
+
+          # 36. ui/widgets/rp_window.cpp.
+          patch('ui/widgets/rp_window.cpp',
+                'rpl::producer<Platform::HitTestResult> RpWindow::systemButtonDown() const {\n'
+                '\treturn _helper->systemButtonDown();\n}\n',
+                'rpl::producer<Platform::HitTestResult> RpWindow::systemButtonDown() const {\n'
+                '\treturn _helper->systemButtonDown();\n}\n\nauto RpWindow::systemCommandRequests() const\n'
+                '-> rpl::producer<not_null<Platform::SystemCommandRequest*>> {\n'
+                '\treturn _helper->systemCommandRequests();\n}\n')
+
+          # 37. ui/platform/ui_platform_window.h.
+          patch('ui/platform/ui_platform_window.h',
+                '#include "ui/round_rect.h"\n\nnamespace style {\n',
+                '#include "ui/round_rect.h"\n\nclass QScreen;\n\nnamespace style {\n')
+
+          # 38. ui/platform/ui_platform_window.h.
+          patch('ui/platform/ui_platform_window.h',
+                'struct HitTestRequest;\nenum class HitTestResult;\n',
+                'struct HitTestRequest;\nstruct SystemCommandRequest;\nenum class HitTestResult;\n')
+
+          # 39. ui/platform/ui_platform_window.h.
+          patch('ui/platform/ui_platform_window.h',
+                '\t[[nodiscard]] virtual QMargins frameMargins();\n',
+                '\t[[nodiscard]] virtual QMargins frameMargins();\n\t[[nodiscard]] virtual QRect fitFrameInWorkArea(\n'
+                '\t\tQRect body,\n\t\tQRect space,\n\t\tnot_null<const QScreen*> screen) const;\n')
+
+          # 40. ui/platform/ui_platform_window.h.
+          patch('ui/platform/ui_platform_window.h',
+                '\t[[nodiscard]] virtual auto systemButtonDown() const\n\t\t-> rpl::producer<HitTestResult>;\n',
+                '\t[[nodiscard]] virtual auto systemButtonDown() const\n\t\t-> rpl::producer<HitTestResult>;\n'
+                '\t[[nodiscard]] virtual auto systemCommandRequests() const\n'
+                '\t\t-> rpl::producer<not_null<SystemCommandRequest*>>;\n')
+
+          # 41. ui/platform/ui_platform_window.cpp.
+          patch('ui/platform/ui_platform_window.cpp',
+                'QMargins BasicWindowHelper::frameMargins() {\n\treturn nativeFrameMargins();\n'
+                '}\n',
+                'QMargins BasicWindowHelper::frameMargins() {\n\treturn nativeFrameMargins();\n'
+                '}\n\nQRect BasicWindowHelper::fitFrameInWorkArea(\n\t\tQRect body,\n'
+                '\t\tQRect space,\n\t\tnot_null<const QScreen*> screen) const {\n'
+                '\treturn body;\n}\n')
+
+          # 42. ui/platform/ui_platform_window.cpp.
+          patch('ui/platform/ui_platform_window.cpp',
+                'auto BasicWindowHelper::hitTestRequests() const\n-> rpl::producer<not_null<HitTestRequest*>> {\n'
+                '\treturn rpl::never<not_null<HitTestRequest*>>();\n}\n',
+                'auto BasicWindowHelper::hitTestRequests() const\n-> rpl::producer<not_null<HitTestRequest*>> {\n'
+                '\treturn rpl::never<not_null<HitTestRequest*>>();\n}\n\nauto BasicWindowHelper::systemCommandRequest'
+                's() const\n-> rpl::producer<not_null<SystemCommandRequest*>> {\n'
+                '\treturn rpl::never<not_null<SystemCommandRequest*>>();\n}\n')
+
+          # 43. ui/platform/ui_platform_utility.h.
+          patch('ui/platform/ui_platform_utility.h',
+                '[[nodiscard]] bool IsApplicationActive();\n',
+                '[[nodiscard]] bool IsApplicationActive();\n\n// Native maximized state, true before Qt delivers its '
+                '(queued) state event.\n[[nodiscard]] bool IsMaximizedNatively(not_null<QWidget*> window);\n')
+
+          # 44. ui/platform/win/ui_utility_win.cpp.
+          patch('ui/platform/win/ui_utility_win.cpp',
+                'bool IsApplicationActive() {\n\treturn QApplication::activeWindow() != nullptr;\n'
+                '}\n\nvoid IgnoreAllActivation(',
+                'bool IsApplicationActive() {\n\treturn QApplication::activeWindow() != nullptr;\n'
+                '}\n\nbool IsMaximizedNatively(not_null<QWidget*> window) {\n'
+                '\tconst auto handle = window->windowHandle();\n\treturn (handle && handle->handle())\n'
+                '\t\t? (IsZoomed(reinterpret_cast<HWND>(handle->winId())) != FALSE)\n'
+                '\t\t: window->isMaximized();\n}\n\nvoid IgnoreAllActivation(')
+
+          # 45. ui/image/image_prepare.h.
+          patch('ui/image/image_prepare.h',
+                '[[nodiscard]] ReadResult Read(ReadArgs &&args);\n',
+                '[[nodiscard]] ReadResult Read(ReadArgs &&args);\n\n[[nodiscard]] bool IsSvgFormat(const QByteArray &'
+                'format);\n')
+
+          # 46. ui/image/image_prepare.cpp.
+          patch('ui/image/image_prepare.cpp',
+                '[[nodiscard]] ReadResult ReadGzipSvg(const ReadArgs &args) {\n',
+                'bool IsSvgFormat(const QByteArray &format) {\n\tconst auto lower = format.toLower();\n'
+                '\treturn (lower == "svg") || (lower == "svgz");\n}\n\n[[nodiscard]] ReadResult ReadGzipSvg(const Rea'
+                'dArgs &args) {\n')
+
+          # 47. ui/layers/box_content.h.
+          patch('ui/layers/box_content.h',
+                '\tvirtual void setNoContentMargin(bool noContentMargin) = 0;\n',
+                '\tvirtual void setNoContentMargin(bool noContentMargin) = 0;\n'
+                '\tvirtual void setMinimalTopSkip(int skip) = 0;\n')
+
+          # 48. ui/layers/box_content.h.
+          patch('ui/layers/box_content.h',
+                '\t\tgetDelegate()->setNoContentMargin(noContentMargin);\n\t}\n',
+                '\t\tgetDelegate()->setNoContentMargin(noContentMargin);\n\t}\n'
+                '\tvoid setMinimalTopSkip(int skip) {\n\t\tgetDelegate()->setMinimalTopSkip(skip);\n'
+                '\t}\n')
+
+          # 49. ui/layers/box_layer_widget.h.
+          patch('ui/layers/box_layer_widget.h',
+                '\tvoid setNoContentMargin(bool noContentMargin) override {\n'
+                '\t\tif (_noContentMargin != noContentMargin) {\n\t\t\t_noContentMargin = noContentMargin;\n'
+                '\t\t\tupdateSize();\n\t\t}\n\t}\n\n\tbool isBoxShown() const override {\n',
+                '\tvoid setNoContentMargin(bool noContentMargin) override {\n'
+                '\t\tif (_noContentMargin != noContentMargin) {\n\t\t\t_noContentMargin = noContentMargin;\n'
+                '\t\t\tupdateSize();\n\t\t}\n\t}\n\tvoid setMinimalTopSkip(int skip) override;\n'
+                '\n\tbool isBoxShown() const override {\n')
+
+          # 50. ui/layers/box_layer_widget.h.
+          patch('ui/layers/box_layer_widget.h',
+                '\t[[nodiscard]] int countRealHeight() const;\n',
+                '\t[[nodiscard]] int countRealHeight() const;\n\t[[nodiscard]] int withMinimalTopSkip(int top) const;'
+                '\n')
+
+          # 51. ui/layers/box_layer_widget.h.
+          patch('ui/layers/box_layer_widget.h',
+                '\tint _maxContentHeight = 0;\n',
+                '\tint _maxContentHeight = 0;\n\tint _minimalTopSkip = 0;\n')
+
+          # 52. ui/layers/box_layer_widget.cpp.
+          patch('ui/layers/box_layer_widget.cpp',
+                'void BoxLayerWidget::setStyle(const style::Box &st) {\n\t_st = &st;\n'
+                '\t_roundRect.setColor(st.bg);\n\tupdateMaxRealHeight();\n}\n'
+                '\nconst style::Box &BoxLayerWidget::style() {\n',
+                'void BoxLayerWidget::setStyle(const style::Box &st) {\n\t_st = &st;\n'
+                '\t_roundRect.setColor(st.bg);\n\tupdateMaxRealHeight();\n}\n'
+                '\nvoid BoxLayerWidget::setMinimalTopSkip(int skip) {\n\tif (_minimalTopSkip == skip) {\n'
+                '\t\treturn;\n\t}\n\t_minimalTopSkip = skip;\n\tconst auto was = geometry();\n'
+                '\tparentResized();\n\tif (geometry() != was) {\n\t\tresizeEvent(nullptr);\n'
+                '\t}\n}\n\nconst style::Box &BoxLayerWidget::style() {\n')
+
+          # 53. ui/layers/box_layer_widget.cpp.
+          patch('ui/layers/box_layer_widget.cpp',
+                '\t\t(parentSize.height() - newHeight) / 2,\n',
+                '\t\twithMinimalTopSkip((parentSize.height() - newHeight) / 2),\n')
+
+          # 54. ui/layers/box_layer_widget.cpp.
+          patch('ui/layers/box_layer_widget.cpp',
+                '\tconst auto max = containerHeight - margin.top() - margin.bottom();\n',
+                '\tconst auto max = containerHeight\n\t\t- withMinimalTopSkip(margin.top())\n'
+                '\t\t- margin.bottom();\n')
+
+          # 55. ui/layers/box_layer_widget.cpp.
+          patch('ui/layers/box_layer_widget.cpp',
+                '\t\t\t\tconst auto newTop = forceCenterPosition\n\t\t\t\t\t? std::min(top1, top2)\n'
+                '\t\t\t\t\t: std::max(top1, top2);\n',
+                '\t\t\t\tconst auto newTop = withMinimalTopSkip(forceCenterPosition\n'
+                '\t\t\t\t\t? std::min(top1, top2)\n\t\t\t\t\t: std::max(top1, top2));\n')
+
+          # 56. ui/layers/box_layer_widget.cpp.
+          patch('ui/layers/box_layer_widget.cpp',
+                'int BoxLayerWidget::countRealHeight() const {\n\treturn std::min(_fullHeight, _realHeightMax.current'
+                '());\n}\n\nint BoxLayerWidget::countFullHeight() const {\n',
+                'int BoxLayerWidget::countRealHeight() const {\n\treturn std::min(_fullHeight, _realHeightMax.current'
+                '());\n}\n\nint BoxLayerWidget::withMinimalTopSkip(int top) const {\n'
+                '\treturn (_minimalTopSkip > 0 && _layer->centerWithinOuter())\n'
+                '\t\t? std::max(top, _minimalTopSkip)\n\t\t: top;\n}\n\nint BoxLayerWidget::countFullHeight() const {'
+                '\n')
+
+          print('lib_ui accessibility/touch/GL/window patch complete.')
+          PYEOF
+
       - name: First set up.
         shell: bash
         run: |
@@ -1168,6 +1781,12 @@ jobs:
           static const char *AlphaPrivateKey = "";
           EOF
 
+      - name: Report disk space before build.
+        shell: bash
+        run: |
+          df -h
+          du -sh "$TBUILD" 2>/dev/null || true
+
       - name: RasGram Desktop build.
         run: |
           cd %TBUILD%\%REPO_NAME%\Telegram
@@ -1178,7 +1797,8 @@ jobs:
           -D CMAKE_CONFIGURATION_TYPES=Release ^
           -D DESKTOP_APP_SPECIAL_TARGET=win64 ^
           -D DESKTOP_APP_DISABLE_AUTOUPDATE=OFF ^
-          -D DESKTOP_APP_DISABLE_CRASH_REPORTS=OFF
+          -D DESKTOP_APP_DISABLE_CRASH_REPORTS=OFF ^
+          -D CMAKE_MSVC_DEBUG_INFORMATION_FORMAT=
 
           cmake --build ..\out --config Release --target Telegram --parallel
 

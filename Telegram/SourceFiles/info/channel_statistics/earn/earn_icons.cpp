@@ -101,6 +101,14 @@ QImage IconCurrencyTwoTone(const style::font &font, const QColor &c) {
 	return IconCurrencyTwoTone(font->ascent, c);
 }
 
+QImage IconCurrencyColored(int size, const QColor &c) {
+	return RenderCurrency(size, CurrencySvgColored(c));
+}
+
+QImage IconCurrencyColored(const style::font &font, const QColor &c) {
+	return IconCurrencyColored(font->ascent, c);
+}
+
 float64 AlignedMarkTop(
 		const style::font &font,
 		const QImage &image) {
@@ -140,6 +148,10 @@ QByteArray CurrencySvgMono(const QColor &c) {
 QByteArray CurrencySvgTwoTone(const QColor &c) {
 	return CurrencySvg(FilledPath(c, kCurrencyBody)
 		+ FilledPath(st::windowFgActive->c, kCurrencyShine));
+}
+
+QByteArray CurrencySvgColored(const QColor &c) {
+	return CurrencySvgMono(c);
 }
 
 QImage MenuIconCurrency(const QSize &size) {
