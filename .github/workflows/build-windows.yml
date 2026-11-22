@@ -204,6 +204,16 @@ jobs:
               print('patched ' + rel)
 
 
+          def patch_once(rel, old, new):
+              path = BASE + '/' + rel
+              with open(path, encoding='utf-8', newline='') as f:
+                  text = f.read().replace(chr(13) + chr(10), chr(10)).replace(chr(13), chr(10))
+              if new in text:
+                  print('already applied in ' + rel)
+                  return
+              patch(rel, old, new)
+
+
           SET_ALLOW = 'void SettingsButton::setAllowTextLines(int lines) {\n\tconst auto wrapChanged = ((_allowTextLines == 1) != (lines == 1));\n\t_allowTextLines = lines;\n\tif (wrapChanged) {\n\t\t// An export of _text would lose colorized parts and custom objects.\n\t\tauto source = _textSource;\n\t\tsetText(std::move(source));\n\t}\n\tresizeToWidth(widthNoMargins());\n\tupdate();\n}\n\n'
           TEXT_WIDTH = 'int SettingsButton::textAvailableWidth(int outerw) const {\n\treturn outerw\n\t\t- _padding.left()\n\t\t- _padding.right()\n\t\t- (_toggle ? (_st.toggleSkip + _toggle->getSize().width()) : 0);\n}\n'
           CONTRAST_DEF = 'ContrastColors ComputeContrastColors(QColor background) {\n\tconst auto contrast = 2.5;\n\tconst auto luminance = 0.2126 * background.redF()\n\t\t+ 0.7152 * background.greenF()\n\t\t+ 0.0722 * background.blueF();\n\tconst auto text = (luminance > 0.5)\n\t\t? QColor(0, 0, 0)\n\t\t: QColor(255, 255, 255);\n\tconst auto textLuminance = (luminance > 0.5) ? 0 : 1;\n\tconst auto adaptiveOpacity = (luminance - textLuminance + contrast)\n\t\t/ contrast;\n\tconst auto opacity = std::clamp(adaptiveOpacity, 0.5, 0.64);\n\tauto control = text;\n\tcontrol.setAlphaF(opacity);\n\tauto ripple = text;\n\tripple.setAlphaF(opacity * 0.1);\n\treturn { text, control, ripple };\n}\n'
@@ -358,8 +368,9 @@ jobs:
                 '[[nodiscard]] int CheckScale(int scale);\n'
                 '[[nodiscard]] int BaseDpi();\n')
 
-          # 14. style::BaseDpi includes.
-          patch('ui/style/style_core_scale.cpp',
+          # 14. style::BaseDpi includes (already in the upstream file
+          # fetched by the previous step, so skip when present).
+          patch_once('ui/style/style_core_scale.cpp',
                 '#include "base/assertion.h"\n',
                 '#include "base/assertion.h"\n'
                 '#include "base/platform/base_platform_info.h"\n\n'
@@ -369,8 +380,9 @@ jobs:
                 '#include <qpa/qplatformscreen.h>\n'
                 '#endif // !DESKTOP_APP_DISABLE_PRIVATE_QT_API\n')
 
-          # 15. style::BaseDpi definition.
-          patch('ui/style/style_core_scale.cpp',
+          # 15. style::BaseDpi definition (already in the upstream file
+          # fetched by the previous step, so skip when present).
+          patch_once('ui/style/style_core_scale.cpp',
                 '\t\t: std::clamp(scale, kScaleMin, MaxScaleForRatio(DevicePixelRatio()));\n'
                 '}\n\n'
                 '} // namespace style\n',
@@ -400,7 +412,7 @@ jobs:
                 '\tvoid refreshPlaceholder(const QString &text);\n')
 
           # 18. main_palette::Override forward declaration.
-          patch('ui/style/style_core_palette.h',
+          patch_once('ui/style/style_core_palette.h',
                 'struct colorizer;\n\n'
                 'class palette : public palette_data {',
                 'struct colorizer;\n\n'
@@ -410,7 +422,7 @@ jobs:
                 'class palette : public palette_data {')
 
           # 19. Palette identity note.
-          patch('ui/style/style_core_palette.h',
+          patch_once('ui/style/style_core_palette.h',
                 '\tpalette();\n'
                 '\tpalette(const palette &other) = delete;',
                 "\t// WHY: override caches can't key on reused addresses: the first finalize,\n"
@@ -420,13 +432,13 @@ jobs:
                 '\tpalette(const palette &other) = delete;')
 
           # 20. main_palette::Override is a friend of palette.
-          patch('ui/style/style_core_palette.h',
+          patch_once('ui/style/style_core_palette.h',
                 '\tfriend class palette_data;\n',
                 '\tfriend class palette_data;\n'
                 '\tfriend class main_palette::Override;\n')
 
           # 21. palette::SwitchMainOverride declaration.
-          patch('ui/style/style_core_palette.h',
+          patch_once('ui/style/style_core_palette.h',
                 '\t[[nodiscard]] static auto PrepareFinalizeHelper(const colorizer &with)\n'
                 '\t\t-> std::unique_ptr<FinalizeHelper>;\n',
                 '\t[[nodiscard]] static auto PrepareFinalizeHelper(const colorizer &with)\n'
@@ -434,7 +446,7 @@ jobs:
                 '\tstatic void SwitchMainOverride(const palette *target);\n')
 
           # 22. Palette identity member.
-          patch('ui/style/style_core_palette.h',
+          patch_once('ui/style/style_core_palette.h',
                 '\tstd::unique_ptr<FinalizeHelper> _finalizeHelper;\n'
                 '\tbool _ready = false;\n',
                 '\tstd::unique_ptr<FinalizeHelper> _finalizeHelper;\n'
@@ -442,7 +454,7 @@ jobs:
                 '\tbool _ready = false;\n')
 
           # 23. main_palette::Override class + CurrentOverrideIdentity declaration.
-          patch('ui/style/style_core_palette.h',
+          patch_once('ui/style/style_core_palette.h',
                 'int indexOfColor(color c);\n\n'
                 '} // namespace main_palette',
                 'int indexOfColor(color c);\n\n'
@@ -461,13 +473,13 @@ jobs:
                 '} // namespace main_palette')
 
           # 24. <atomic> for the palette identity counter.
-          patch('ui/style/style_core_palette.cpp',
+          patch_once('ui/style/style_core_palette.cpp',
                 '#include "ui/style/style_palette_colorizer.h"\n',
                 '#include "ui/style/style_palette_colorizer.h"\n\n'
                 '#include <atomic>\n')
 
           # 25. Main override state + identity counter.
-          patch('ui/style/style_core_palette.cpp',
+          patch_once('ui/style/style_core_palette.cpp',
                 'namespace style {\n\n'
                 'struct palette::FinalizeHelper {',
                 'namespace style {\n'
@@ -475,7 +487,7 @@ jobs:
                 + 'struct palette::FinalizeHelper {')
 
           # 26. Renew the identity on finalize.
-          patch('ui/style/style_core_palette.cpp',
+          patch_once('ui/style/style_core_palette.cpp',
                 '\tif (_ready) return;\n'
                 '\t_ready = true;\n\n'
                 '\t_finalizeHelper = PrepareFinalizeHelper(with);',
@@ -485,7 +497,7 @@ jobs:
                 '\t_finalizeHelper = PrepareFinalizeHelper(with);')
 
           # 27. Renew the identity on assignment.
-          patch('ui/style/style_core_palette.cpp',
+          patch_once('ui/style/style_core_palette.cpp',
                 '\t\t\t_ready = false;\n'
                 '\t\t}\n'
                 '\t}\n'
@@ -497,7 +509,7 @@ jobs:
                 '\tif (wasReady && !_ready) {')
 
           # 28. Renew the identity on load.
-          patch('ui/style/style_core_palette.cpp',
+          patch_once('ui/style/style_core_palette.cpp',
                 '\t\tsetData(i, { p[i * 4 + 0], p[i * 4 + 1], p[i * 4 + 2], p[i * 4 + 3] });\n'
                 '\t}\n'
                 '\treturn true;\n'
@@ -509,7 +521,7 @@ jobs:
                 '}')
 
           # 29. Renew the identity on setColor.
-          patch('ui/style/style_core_palette.cpp',
+          patch_once('ui/style/style_core_palette.cpp',
                 '\tsetData(nameIndex, { r, g, b, a });\n'
                 '\treturn duplicate ? SetResult::Duplicate : SetResult::Ok;\n'
                 '}',
@@ -519,7 +531,7 @@ jobs:
                 '}')
 
           # 30. Renew the identity on setColor from another color.
-          patch('ui/style/style_core_palette.cpp',
+          patch_once('ui/style/style_core_palette.cpp',
                 '\tsetData(nameIndex, *data(fromIndex));\n'
                 '\treturn duplicate ? SetResult::Duplicate : SetResult::Ok;\n'
                 '}',
@@ -529,7 +541,7 @@ jobs:
                 '}')
 
           # 31. palette::SwitchMainOverride definition.
-          patch('ui/style/style_core_palette.cpp',
+          patch_once('ui/style/style_core_palette.cpp',
                 'namespace main_palette {\n'
                 'namespace {',
                 SWITCH_DEF
@@ -537,7 +549,7 @@ jobs:
                 'namespace {')
 
           # 32. Invalidate the override on main_palette::load.
-          patch('ui/style/style_core_palette.cpp',
+          patch_once('ui/style/style_core_palette.cpp',
                 'bool load(const QByteArray &cache) {\n'
                 '\tif (GetMutable().load(cache)) {',
                 'bool load(const QByteArray &cache) {\n'
@@ -545,7 +557,7 @@ jobs:
                 '\tif (GetMutable().load(cache)) {')
 
           # 33. Invalidate the override on main_palette::setColor.
-          patch('ui/style/style_core_palette.cpp',
+          patch_once('ui/style/style_core_palette.cpp',
                 'palette::SetResult setColor(QLatin1String name, uchar r, uchar g, uchar b, uchar a) {\n'
                 '\treturn GetMutable().setColor(name, r, g, b, a);',
                 'palette::SetResult setColor(QLatin1String name, uchar r, uchar g, uchar b, uchar a) {\n'
@@ -553,7 +565,7 @@ jobs:
                 '\treturn GetMutable().setColor(name, r, g, b, a);')
 
           # 34. Invalidate the override on main_palette::setColor from another color.
-          patch('ui/style/style_core_palette.cpp',
+          patch_once('ui/style/style_core_palette.cpp',
                 'palette::SetResult setColor(QLatin1String name, QLatin1String from) {\n'
                 '\treturn GetMutable().setColor(name, from);',
                 'palette::SetResult setColor(QLatin1String name, QLatin1String from) {\n'
@@ -561,7 +573,7 @@ jobs:
                 '\treturn GetMutable().setColor(name, from);')
 
           # 35. Invalidate the override on main_palette::apply.
-          patch('ui/style/style_core_palette.cpp',
+          patch_once('ui/style/style_core_palette.cpp',
                 'void apply(const palette &other) {\n'
                 '\tGetMutable() = other;',
                 'void apply(const palette &other) {\n'
@@ -569,7 +581,7 @@ jobs:
                 '\tGetMutable() = other;')
 
           # 36. Invalidate the override on main_palette::reset.
-          patch('ui/style/style_core_palette.cpp',
+          patch_once('ui/style/style_core_palette.cpp',
                 'void reset() {\n'
                 '\tGetMutable().reset();',
                 'void reset() {\n'
@@ -577,7 +589,7 @@ jobs:
                 '\tGetMutable().reset();')
 
           # 37. Invalidate the override on main_palette::reset with a colorizer.
-          patch('ui/style/style_core_palette.cpp',
+          patch_once('ui/style/style_core_palette.cpp',
                 'void reset(const colorizer &with) {\n'
                 '\tGetMutable().reset(with);',
                 'void reset(const colorizer &with) {\n'
@@ -585,7 +597,7 @@ jobs:
                 '\tGetMutable().reset(with);')
 
           # 38. main_palette::Override + CurrentOverrideIdentity definitions.
-          patch('ui/style/style_core_palette.cpp',
+          patch_once('ui/style/style_core_palette.cpp',
                 'int indexOfColor(color c) {\n'
                 '\treturn GetMutable().indexOfColor(c);\n'
                 '}\n\n'
