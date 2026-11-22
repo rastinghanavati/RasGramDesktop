@@ -681,6 +681,404 @@ jobs:
 
           print('lib_ui patch complete.')
           PYEOF
+      - name: Patch lib_ui for Telegram 7.4.5 IV APIs (TonAddress, scroll_math, highlight rects, CustomEmoji texts).
+        shell: bash
+        run: |
+          set -euo pipefail
+          UI="$TBUILD/$REPO_NAME/Telegram/lib_ui"
+          curl -fsSL "https://raw.githubusercontent.com/desktop-app/lib_ui/562381f7537c60a2bec7b0fea37bdb14392bfbf3/ui/widgets/scroll_math.h" -o "$UI/ui/widgets/scroll_math.h"
+          echo "7c0f69212ce3f69d8b664aef8ce64d52a1ab3669d8ff189fa19d2027932aa2fb  $UI/ui/widgets/scroll_math.h" | sha256sum -c -
+          python3 - "$UI" <<'PYEOF'
+          #!/usr/bin/env python3
+          """Patch AyuGram lib_ui (e3d0582) with the upstream Telegram 7.4.5 APIs it
+          lacks, needed by the Instant View sources (td_iv): EntityType::TonAddress,
+          ui/widgets/scroll_math.h, Ui::Text::String::countHighlightRects,
+          CustomEmojiLinkTexts, TextParseKeepLeadingSpaces, ReplacedTextRanges and
+          EntityReplacesText. Insertions only, except the ComputeScrollTo export.
+          Every anchor must occur exactly once or the step fails. Files are
+          normalized to LF line endings first: the Windows runner checks them out
+          as CRLF, and the anchors use \n only."""
+          import sys
+
+          BASE = sys.argv[1]
+
+
+          def patch(rel, old, new):
+              path = BASE + '/' + rel
+              with open(path, encoding='utf-8', newline='') as f:
+                  text = f.read()
+              crlf = text.count('\r')
+              if crlf:
+                  print('normalized ' + str(crlf)
+                        + ' CR line endings in ' + rel)
+              text = text.replace('\r\n', '\n').replace('\r', '\n')
+              count = text.count(old)
+              if count != 1:
+                  print('FAIL: ' + rel + ': anchor found '
+                        + str(count) + ' times (expected 1): ' + repr(old[:80]))
+                  sys.exit(1)
+              with open(path, 'w', encoding='utf-8', newline='') as f:
+                  f.write(text.replace(old, new))
+              print('patched ' + rel)
+
+
+          APPEND_ORDERED = 'void AppendOrderedRange(\n\t\tQVarLengthArray<FixedRange> &ranges,\n\t\tFixedRange range,\n\t\tbool &ordered) {\n\tif (range.empty()) {\n\t\treturn;\n\t} else if (ordered && !ranges.empty()) {\n\t\tauto &tail = ranges.back();\n\t\tif (range.from < tail.from) {\n\t\t\tordered = false;\n\t\t} else if (!Distinct(tail, range)) {\n\t\t\ttail = United(tail, range);\n\t\t\treturn;\n\t\t}\n\t}\n\tranges.push_back(range);\n}\n\n'
+          SELECTION_SWEEP = 'class SelectionSweep final {\npublic:\n\tSelectionSweep(\n\t\tconst ShapedItem &shaped,\n\t\tint drawFrom,\n\t\tint drawTill,\n\t\tFixed x);\n\n\t[[nodiscard]] FixedRange extent(int selStart, int selEnd);\n\nprivate:\n\tvoid next();\n\n\tconst ShapedItem &_shaped;\n\tint _drawFrom = 0;\n\tint _drawTill = 0;\n\tFixed _x;\n\tint _ch = 0;\n\tint _ch2 = 0;\n\tFixed _gwidth;\n\tFixed _prefix;\n\n};\n\nSelectionSweep::SelectionSweep(\n\t\tconst ShapedItem &shaped,\n\t\tint drawFrom,\n\t\tint drawTill,\n\t\tFixed x)\n: _shaped(shaped)\n, _drawFrom(drawFrom)\n, _drawTill(drawTill)\n, _x(x) {\n}\n\nFixedRange SelectionSweep::extent(int selStart, int selEnd) {\n\twhile (_ch2 <= selStart) {\n\t\tnext();\n\t}\n\tauto selX = _x + _prefix;\n\tauto selWidth = Fixed();\n\tif (_ch < selStart) {\n\t\tselX += Fixed(selStart - _ch) * _gwidth / Fixed(_ch2 - _ch);\n\t\tif (_ch2 >= selEnd) {\n\t\t\tselWidth += Fixed(selEnd - selStart)\n\t\t\t\t* _gwidth\n\t\t\t\t/ Fixed(_ch2 - _ch);\n\t\t\treturn { selX, selX + selWidth };\n\t\t}\n\t\tselWidth += Fixed(_ch2 - selStart) * _gwidth / Fixed(_ch2 - _ch);\n\t\tnext();\n\t}\n\twhile (_ch2 < selEnd) {\n\t\tselWidth += _gwidth;\n\t\tnext();\n\t}\n\tif (_ch2 == selEnd) {\n\t\tselWidth += _gwidth;\n\t} else {\n\t\tselWidth += Fixed(selEnd - _ch) * _gwidth / Fixed(_ch2 - _ch);\n\t}\n\treturn { selX, selX + selWidth };\n}\n\nvoid SelectionSweep::next() {\n\t_prefix += _gwidth;\n\t_ch = _ch2;\n\t_ch2 = _shaped.clusterEnd(_drawFrom + _ch, _drawTill) - _drawFrom;\n\t_gwidth = _shaped.width(_drawFrom + _ch, _drawFrom + _ch2);\n}\n\n'
+          HIGHLIGHT_BATCH = 'struct Renderer::HighlightBatch {\n\tQVarLengthArray<TextSelection, 16> ranges;\n\tint first = 0;\n\tint last = 0;\n\tfloat64 ratio = 1.;\n\tQVarLengthArray<FixedRange, 16> extents;\n\tbool lineOrdered = true;\n};\n\n'
+          HIGHLIGHT_RECTS = 'std::vector<QRect> Renderer::highlightRects(\n\t\tstd::span<const TextSelection> ranges,\n\t\tconst HighlightRectsRequest &request) {\n\tExpects(request.geometry.layout != nullptr);\n\tExpects(!request.geometry.outElided);\n\tExpects(std::isfinite(request.ratio) && request.ratio > 0.);\n\n\tif (_t->isEmpty()) {\n\t\treturn {};\n\t}\n\tauto batch = HighlightBatch{ .ratio = request.ratio };\n\tauto &list = batch.ranges;\n\tfor (const auto &range : ranges) {\n\t\tif (range.from < range.to) {\n\t\t\tlist.push_back(range);\n\t\t}\n\t}\n\tif (list.empty()) {\n\t\treturn {};\n\t}\n\tconst auto byFrom = [](TextSelection a, TextSelection b) {\n\t\treturn a.from < b.from;\n\t};\n\tif (!std::is_sorted(list.begin(), list.end(), byFrom)) {\n\t\tstd::sort(list.begin(), list.end(), byFrom);\n\t}\n\tauto united = list.begin();\n\tfor (auto i = united + 1; i != list.end(); ++i) {\n\t\tif (i->from <= united->to) {\n\t\t\tunited->to = std::max(united->to, i->to);\n\t\t} else {\n\t\t\t*++united = *i;\n\t\t}\n\t}\n\tlist.resize(united - list.begin() + 1);\n\n\t_batch = &batch;\n\tconst auto guard = gsl::finally([&] {\n\t\t_batch = nullptr;\n\t});\n\t_x = _startLeft = request.position.x();\n\t_y = _startTop = request.position.y();\n\t_yFrom = request.clip.isNull() ? 0 : request.clip.y();\n\t_yTo = request.clip.isNull()\n\t\t? -1\n\t\t: (request.clip.y() + request.clip.height());\n\t_geometry = request.geometry;\n\t_breakEverywhere = _geometry.breakEverywhere;\n\t_align = request.align;\n\tenumerate();\n\treturn std::vector<QRect>(_highlightRects.begin(), _highlightRects.end());\n}\n\n'
+          COLLECT_HIGHLIGHTS = 'bool Renderer::collectLineHighlights(\n\t\tconst QString &lineText,\n\t\tint lineStart,\n\t\tint lineLength,\n\t\tFixed x,\n\t\tbool emptyLine) {\n\tauto &batch = *_batch;\n\tconst auto &ranges = batch.ranges;\n\tconst auto count = int(ranges.size());\n\twhile (batch.first != count && ranges[batch.first].to <= _lineStart) {\n\t\t++batch.first;\n\t}\n\tif (batch.first == count) {\n\t\treturn false;\n\t}\n\tconst auto lineTill = _lineStart + lineLength;\n\tif (emptyLine || ranges[batch.first].from >= lineTill) {\n\t\treturn !_elidedLine;\n\t}\n\tbatch.last = std::max(batch.last, batch.first);\n\twhile (batch.last != count && ranges[batch.last].from < lineTill) {\n\t\t++batch.last;\n\t}\n\n\tif (!_elidedLine) {\n\t\tinitParagraphBidi();\n\t}\n\tauto shaper = LineShaper(\n\t\t_t,\n\t\t_paragraph,\n\t\t_localFrom,\n\t\tlineText,\n\t\t_lineStartBlock,\n\t\t_blocksSize);\n\tconst auto firstItem = shaper.findItem(lineStart);\n\tconst auto lastItem = shaper.findItem(lineStart + lineLength - 1);\n\tconst auto nItems = (firstItem >= 0 && lastItem >= firstItem)\n\t\t? (lastItem - firstItem + 1)\n\t\t: 0;\n\tif (!nItems) {\n\t\treturn !_elidedLine;\n\t}\n\tshaper.shapeRange(firstItem, lastItem);\n\tconst auto &items = shaper.items();\n\tconst auto visualOrder = shaper.visualOrder();\n\n\tbatch.lineOrdered = true;\n\tfor (auto i = 0; i != nItems; ++i) {\n\t\tconst auto index = visualOrder[i];\n\t\tconst auto &item = items[index];\n\t\tif (item.object) {\n\t\t\tconst auto blockIt = begin(_t->_blocks) + item.blockIndex;\n\t\t\tconst auto type = blockIt->get()->type();\n\t\t\tif (type == TextBlockType::Emoji\n\t\t\t\t|| type == TextBlockType::CustomEmoji) {\n\t\t\t\tappendObjectHighlight(item, blockIt, x);\n\t\t\t}\n\t\t\tx += item.width;\n\t\t\tcontinue;\n\t\t}\n\t\tconst auto &shaped = shaper.shape(index);\n\t\tconst auto itemStart = std::max(lineStart, item.position);\n\t\tconst auto itemEnd = std::min(\n\t\t\tlineStart + lineLength,\n\t\t\titem.position + item.length);\n\t\tconst auto drawFrom = itemStart - item.position;\n\t\tconst auto drawTill = itemEnd - item.position;\n\t\tconst auto itemWidth = shaped.width(drawFrom, drawTill);\n\t\tappendTextHighlights(item, shaped, drawFrom, drawTill, x, itemWidth);\n\t\tx += itemWidth;\n\t}\n\tif (!batch.lineOrdered) {\n\t\tstd::sort(\n\t\t\t_highlightRanges.begin(),\n\t\t\t_highlightRanges.end(),\n\t\t\t[](FixedRange a, FixedRange b) { return a.from < b.from; });\n\t}\n\tfillRectsFromRanges(_highlightRects, _highlightRanges);\n\treturn !_elidedLine;\n}\n\n'
+          APPEND_TEXT_HIGHLIGHTS = 'void Renderer::appendTextHighlights(\n\t\tconst Item &item,\n\t\tconst ShapedItem &shaped,\n\t\tint drawFrom,\n\t\tint drawTill,\n\t\tFixed x,\n\t\tFixed itemWidth) {\n\tauto &extents = _batch->extents;\n\textents.clear();\n\tconst auto itemStart = _localFrom + item.position + drawFrom;\n\tconst auto itemEnd = _localFrom + item.position + drawTill;\n\tconst auto rtl = item.rtl();\n\tconst auto &ranges = _batch->ranges;\n\tconst auto till = ranges.begin() + _batch->last;\n\tauto i = std::partition_point(\n\t\tranges.begin() + _batch->first,\n\t\ttill,\n\t\t[&](TextSelection range) { return range.to <= itemStart; });\n\tauto sweep = std::optional<SelectionSweep>();\n\tfor (; i != till && i->from < itemEnd; ++i) {\n\t\tif (i->from <= itemStart && i->to >= itemEnd) {\n\t\t\textents.push_back({ x, x + itemWidth });\n\t\t\tcontinue;\n\t\t} else if (!sweep) {\n\t\t\tsweep.emplace(shaped, drawFrom, drawTill, x);\n\t\t}\n\t\tauto extent = sweep->extent(\n\t\t\tstd::max(i->from - itemStart, 0),\n\t\t\tstd::min(i->to - itemStart, drawTill - drawFrom));\n\t\tif (rtl) {\n\t\t\tconst auto selWidth = extent.till - extent.from;\n\t\t\textent.from = x + itemWidth - (extent.from - x) - selWidth;\n\t\t\textent.till = extent.from + selWidth;\n\t\t}\n\t\textents.push_back(extent);\n\t}\n\tconst auto count = int(extents.size());\n\tfor (auto k = 0; k != count; ++k) {\n\t\tAppendOrderedRange(\n\t\t\t_highlightRanges,\n\t\t\textents[rtl ? (count - 1 - k) : k],\n\t\t\t_batch->lineOrdered);\n\t}\n}\n\n'
+          APPEND_OBJECT_HIGHLIGHT = 'void Renderer::appendObjectHighlight(\n\t\tconst Item &item,\n\t\tstd::vector<Block>::const_iterator blockIt,\n\t\tFixed x) {\n\tconst auto position = _localFrom + item.position;\n\tconst auto &ranges = _batch->ranges;\n\tconst auto till = ranges.begin() + _batch->last;\n\tconst auto i = std::partition_point(\n\t\tranges.begin() + _batch->first,\n\t\ttill,\n\t\t[&](TextSelection range) { return range.to <= position; });\n\tif (i != till) {\n\t\tAppendOrderedRange(\n\t\t\t_highlightRanges,\n\t\t\tfindSelectObjectRange(item, blockIt, x, *i),\n\t\t\t_batch->lineOrdered);\n\t}\n}\n\n'
+          REPLACED_IMPL = 'bool EntityReplacesText(const EntityInText &entity) {\n\tconst auto type = entity.type();\n\treturn (type == EntityType::CustomEmoji)\n\t\t|| ((type == EntityType::FormattedDate)\n\t\t\t&& (DeserializeFormattedDateData(entity.data()).second\n\t\t\t\t!= FormattedDateFlags()));\n}\n\nvoid ReplacedTextRanges::add(int from, int till) {\n\tif (from < till) {\n\t\t_ranges.push_back({ .from = from, .till = till });\n\t}\n}\n\nvoid ReplacedTextRanges::prepare() {\n\tranges::sort(_ranges, ranges::less(), &Range::from);\n\tauto till = 0;\n\tfor (auto &range : _ranges) {\n\t\trange.till = till = std::max(till, range.till);\n\t}\n}\n\nbool ReplacedTextRanges::overlaps(int from, int till) const {\n\tif (from >= till) {\n\t\treturn false;\n\t}\n\tconst auto i = ranges::lower_bound(\n\t\t_ranges,\n\t\ttill,\n\t\tranges::less(),\n\t\t&Range::from);\n\treturn (i != _ranges.begin()) && ((i - 1)->till > from);\n}\n'
+          REPLACED_DECL = '[[nodiscard]] bool EntityReplacesText(const EntityInText &entity);\n\nclass ReplacedTextRanges final {\npublic:\n\tvoid add(int from, int till);\n\tvoid prepare();\n\t[[nodiscard]] bool overlaps(int from, int till) const;\n\nprivate:\n\tstruct Range {\n\t\tint from = 0;\n\t\tint till = 0;\n\t};\n\tstd::vector<Range> _ranges;\n\n};\n\n'
+          CUSTOM_EMOJI_TEXTS = 'struct CustomEmojiLinkTexts {\n\tQString tooltip;\n\tQString copyText;\n\tQString copyContextItemText;\n};\n\n'
+          HIGHLIGHT_REQUEST = 'struct HighlightRectsRequest {\n\tQPoint position;\n\tGeometryDescriptor geometry;\n\tstyle::align align = style::al_left;\n\tQRect clip;\n\tfloat64 ratio = 1.;\n};\n\n'
+          HANDLER_METHODS = 'const QString &CustomEmojiClickHandler::entityData() const {\n\treturn _entityData;\n}\n\nQString CustomEmojiClickHandler::tooltip() const {\n\treturn texts().tooltip;\n}\n\nQString CustomEmojiClickHandler::copyToClipboardText() const {\n\treturn texts().copyText;\n}\n\nQString CustomEmojiClickHandler::copyToClipboardContextItemText() const {\n\treturn texts().copyContextItemText;\n}\n\nCustomEmojiLinkTexts CustomEmojiClickHandler::texts() const {\n\tconst auto data = _data.lock();\n\treturn (data && data->texts)\n\t\t? data->texts(_entityData)\n\t\t: CustomEmojiLinkTexts();\n}\n\n'
+
+          # 1. List the new scroll_math.h in the lib_ui sources.
+          patch('CMakeLists.txt',
+                '    ui/widgets/scroll_area.cpp\n    ui/widgets/scroll_area.h\n',
+                '    ui/widgets/scroll_area.cpp\n    ui/widgets/scroll_area.h\n'
+                '    ui/widgets/scroll_math.h\n')
+
+          # 2. Include scroll_math.h in scroll_area.cpp.
+          patch('ui/widgets/scroll_area.cpp',
+                '#include "ui/widgets/scroll_area.h"\n',
+                '#include "ui/widgets/scroll_area.h"\n'
+                '#include "ui/widgets/scroll_math.h"\n')
+
+          # 3. Export ComputeScrollTo from the anonymous namespace.
+          patch('ui/widgets/scroll_area.cpp',
+                'namespace Ui {\nnamespace {\n\n[[nodiscard]] int ComputeScrollTo(',
+                'namespace Ui {\n\nint ComputeScrollTo(')
+          patch('ui/widgets/scroll_area.cpp',
+                '\treturn scToFrom;\n}\n\n} // namespace\n\n// flick scroll taken from',
+                '\treturn scToFrom;\n}\n\n// flick scroll taken from')
+
+          # 4. EntityType::TonAddress.
+          patch('ui/text/text_entity.h',
+                '\tPhone,\n\tBankCard,\n',
+                '\tPhone,\n\tBankCard,\n\tTonAddress,\n')
+
+          # 5. <vector> for ReplacedTextRanges.
+          patch('ui/text/text_entity.h',
+                '#include <QtGui/QClipboard>\n\nstruct TextWithEntities;',
+                '#include <QtGui/QClipboard>\n\n#include <vector>\n\nstruct TextWithEntities;')
+
+          # 6. EntityReplacesText + ReplacedTextRanges declarations.
+          patch('ui/text/text_entity.h',
+                '\tQString _data;\n\n};\n\nstruct TextWithEntities {',
+                '\tQString _data;\n\n};\n\n' + REPLACED_DECL
+                + 'struct TextWithEntities {')
+
+          # 7. TextParseKeepLeadingSpaces flag.
+          patch('ui/text/text_entity.h',
+                '\tTextParseColorized = 0x040,\n};',
+                '\tTextParseColorized = 0x040,\n\tTextParseKeepLeadingSpaces = 0x080,\n};')
+
+          # 8. EntityReplacesText + ReplacedTextRanges definitions.
+          patch('ui/text/text_entity.cpp',
+                '\treturn std::pair(date, flags);\n}',
+                '\treturn std::pair(date, flags);\n}\n\n' + REPLACED_IMPL.rstrip('\n'))
+
+          # 9. CustomEmojiLinkTexts struct.
+          patch('ui/text/text.h',
+                '\nclass SpoilerMessCache {',
+                '\n' + CUSTOM_EMOJI_TEXTS + 'class SpoilerMessCache {')
+
+          # 10. HighlightRectsRequest struct.
+          patch('ui/text/text.h',
+                '\nstruct PaintContext {',
+                '\n' + HIGHLIGHT_REQUEST + 'struct PaintContext {')
+
+          # 11. setCustomEmojiClickHandler texts parameter (declaration).
+          patch('ui/text/text.h',
+                '\tvoid setCustomEmojiClickHandler(\n'
+                '\t\tFn<bool(QStringView)> predicate,\n'
+                '\t\tFn<void(QStringView, ClickContext)> callback);',
+                '\tvoid setCustomEmojiClickHandler(\n'
+                '\t\tFn<bool(QStringView)> predicate,\n'
+                '\t\tFn<void(QStringView, ClickContext)> callback,\n'
+                '\t\tFn<CustomEmojiLinkTexts(QStringView)> texts = nullptr);')
+
+          # 12. String::countHighlightRects declaration.
+          patch('ui/text/text.h',
+                '\t[[nodiscard]] StateResult getState(\n'
+                '\t\tQPoint point,\n'
+                '\t\tGeometryDescriptor geometry,\n'
+                '\t\tStateRequest request = StateRequest()) const;',
+                '\t[[nodiscard]] StateResult getState(\n'
+                '\t\tQPoint point,\n'
+                '\t\tGeometryDescriptor geometry,\n'
+                '\t\tStateRequest request = StateRequest()) const;\n'
+                '\t[[nodiscard]] std::vector<QRect> countHighlightRects(\n'
+                '\t\tstd::span<const TextSelection> ranges,\n'
+                '\t\tconst HighlightRectsRequest &request) const;')
+
+          # 13. setCustomEmojiClickHandler texts parameter (definition).
+          patch('ui/text/text.cpp',
+                'void String::setCustomEmojiClickHandler(\n'
+                '\t\tFn<bool(QStringView)> predicate,\n'
+                '\t\tFn<void(QStringView, ClickContext)> callback) {\n'
+                '\tconst auto extended = ensureExtended();\n'
+                '\textended->customEmoji = std::make_shared<CustomEmojiData>();\n'
+                '\tconst auto &data = extended->customEmoji;\n'
+                '\tdata->predicate = std::move(predicate);\n'
+                '\tdata->callback = std::move(callback);\n'
+                '}',
+                'void String::setCustomEmojiClickHandler(\n'
+                '\t\tFn<bool(QStringView)> predicate,\n'
+                '\t\tFn<void(QStringView, ClickContext)> callback,\n'
+                '\t\tFn<CustomEmojiLinkTexts(QStringView)> texts) {\n'
+                '\tconst auto extended = ensureExtended();\n'
+                '\textended->customEmoji = std::make_shared<CustomEmojiData>();\n'
+                '\tconst auto &data = extended->customEmoji;\n'
+                '\tdata->predicate = std::move(predicate);\n'
+                '\tdata->callback = std::move(callback);\n'
+                '\tdata->texts = std::move(texts);\n'
+                '}')
+
+          # 14. String::countHighlightRects definition.
+          patch('ui/text/text.cpp',
+                'StateResult String::getState(\n'
+                '\t\tQPoint point,\n'
+                '\t\tGeometryDescriptor geometry,\n'
+                '\t\tStateRequest request) const {\n'
+                '\treturn Renderer(*this).getState(point, std::move(geometry), request);\n'
+                '}\n',
+                'StateResult String::getState(\n'
+                '\t\tQPoint point,\n'
+                '\t\tGeometryDescriptor geometry,\n'
+                '\t\tStateRequest request) const {\n'
+                '\treturn Renderer(*this).getState(point, std::move(geometry), request);\n'
+                '}\n\n'
+                'std::vector<QRect> String::countHighlightRects(\n'
+                '\t\tstd::span<const TextSelection> ranges,\n'
+                '\t\tconst HighlightRectsRequest &request) const {\n'
+                '\treturn Renderer(*this).highlightRects(ranges, request);\n'
+                '}\n')
+
+          # 15. text.h for CustomEmojiLinkTexts in text_extended_data.h.
+          patch('ui/text/text_extended_data.h',
+                '#include "ui/click_handler.h"\n',
+                '#include "ui/click_handler.h"\n'
+                '#include "ui/text/text.h"\n')
+
+          # 16. CustomEmojiClickHandler accessors (declarations).
+          patch('ui/text/text_extended_data.h',
+                '\texplicit CustomEmojiClickHandler(\n'
+                '\t\tconst std::shared_ptr<CustomEmojiData> &data,\n'
+                '\t\tQString entityData);\n'
+                '\n'
+                '\tvoid onClick(ClickContext context) const override;\n'
+                '\n'
+                'private:',
+                '\texplicit CustomEmojiClickHandler(\n'
+                '\t\tconst std::shared_ptr<CustomEmojiData> &data,\n'
+                '\t\tQString entityData);\n'
+                '\n'
+                '\t[[nodiscard]] const QString &entityData() const;\n'
+                '\n'
+                '\tvoid onClick(ClickContext context) const override;\n'
+                '\tQString tooltip() const override;\n'
+                '\tQString copyToClipboardText() const override;\n'
+                '\tQString copyToClipboardContextItemText() const override;\n'
+                '\n'
+                'private:')
+
+          # 17. CustomEmojiClickHandler::texts declaration.
+          patch('ui/text/text_extended_data.h',
+                '\tconst std::weak_ptr<CustomEmojiData> _data;\n'
+                '\tconst QString _entityData;\n'
+                '\n'
+                '};',
+                '\t[[nodiscard]] CustomEmojiLinkTexts texts() const;\n'
+                '\n'
+                '\tconst std::weak_ptr<CustomEmojiData> _data;\n'
+                '\tconst QString _entityData;\n'
+                '\n'
+                '};')
+
+          # 18. CustomEmojiData::texts field.
+          patch('ui/text/text_extended_data.h',
+                '\tFn<void(QStringView, ClickContext)> callback;\n\n};',
+                '\tFn<void(QStringView, ClickContext)> callback;\n'
+                '\tFn<CustomEmojiLinkTexts(QStringView)> texts;\n\n};')
+
+          # 19. CustomEmojiClickHandler accessors (definitions).
+          patch('ui/text/text_extended_data.cpp',
+                '\tif (data->callback) {\n'
+                '\t\tdata->callback(_entityData, context);\n'
+                '\t}\n'
+                '}\n'
+                '\n'
+                '} // namespace Ui::Text',
+                '\tif (data->callback) {\n'
+                '\t\tdata->callback(_entityData, context);\n'
+                '\t}\n'
+                '}\n'
+                '\n'
+                + HANDLER_METHODS
+                + '} // namespace Ui::Text')
+
+          # 20. trimSourceRange takes the parse options (declaration).
+          patch('ui/text/text_block_parser.h',
+                '\tvoid trimSourceRange();',
+                '\tvoid trimSourceRange(const TextParseOptions &options);')
+
+          # 21. trimSourceRange call site passes the options.
+          patch('ui/text/text_block_parser.cpp',
+                '\tskipBadEntities();\n\ttrimSourceRange();',
+                '\tskipBadEntities();\n\ttrimSourceRange(options);')
+
+          # 22. trimSourceRange keeps leading spaces when asked.
+          patch('ui/text/text_block_parser.cpp',
+                'void BlockParser::trimSourceRange() {\n'
+                '\tconst auto firstMonospaceOffset = EntityInText::FirstMonospaceOffset(\n'
+                '\t\t_source.entities,\n'
+                '\t\t_end - _start);',
+                'void BlockParser::trimSourceRange(const TextParseOptions &options) {\n'
+                '\tconst auto firstMonospaceOffset\n'
+                '\t\t= (options.flags & TextParseKeepLeadingSpaces)\n'
+                '\t\t? 0\n'
+                '\t\t: EntityInText::FirstMonospaceOffset(\n'
+                '\t\t\t_source.entities,\n'
+                '\t\t\t_end - _start);')
+
+          # 23. Renderer::highlightRects declaration.
+          patch('ui/text/text_renderer.h',
+                '\t[[nodiscard]] StateResult getState(\n'
+                '\t\tQPoint point,\n'
+                '\t\tGeometryDescriptor geometry,\n'
+                '\t\tStateRequest request);',
+                '\t[[nodiscard]] StateResult getState(\n'
+                '\t\tQPoint point,\n'
+                '\t\tGeometryDescriptor geometry,\n'
+                '\t\tStateRequest request);\n'
+                '\t[[nodiscard]] std::vector<QRect> highlightRects(\n'
+                '\t\tstd::span<const TextSelection> ranges,\n'
+                '\t\tconst HighlightRectsRequest &request);')
+
+          # 24. HighlightBatch forward declaration.
+          patch('ui/text/text_renderer.h',
+                '\tstruct BidiControl;\n',
+                '\tstruct BidiControl;\n\tstruct HighlightBatch;\n')
+
+          # 25. collect/append highlight declarations.
+          patch('ui/text/text_renderer.h',
+                '\t\tFixed itemWidth,\n'
+                '\t\tTextSelection selection) const;\n'
+                '\tvoid fillSelectRange(FixedRange range);',
+                '\t\tFixed itemWidth,\n'
+                '\t\tTextSelection selection) const;\n'
+                '\t[[nodiscard]] bool collectLineHighlights(\n'
+                '\t\tconst QString &lineText,\n'
+                '\t\tint lineStart,\n'
+                '\t\tint lineLength,\n'
+                '\t\tFixed x,\n'
+                '\t\tbool emptyLine);\n'
+                '\tvoid appendTextHighlights(\n'
+                '\t\tconst Item &item,\n'
+                '\t\tconst ShapedItem &shaped,\n'
+                '\t\tint drawFrom,\n'
+                '\t\tint drawTill,\n'
+                '\t\tFixed x,\n'
+                '\t\tFixed itemWidth);\n'
+                '\tvoid appendObjectHighlight(\n'
+                '\t\tconst Item &item,\n'
+                '\t\tstd::vector<Block>::const_iterator blockIt,\n'
+                '\t\tFixed x);\n'
+                '\tvoid fillSelectRange(FixedRange range);')
+
+          # 26. HighlightBatch member.
+          patch('ui/text/text_renderer.h',
+                '\tHighlightInfoRequest *_highlight = nullptr;\n',
+                '\tHighlightInfoRequest *_highlight = nullptr;\n'
+                '\tHighlightBatch *_batch = nullptr;\n')
+
+          # 27. AppendOrderedRange + SelectionSweep + HighlightBatch (definitions).
+          patch('ui/text/text_renderer.cpp',
+                '\tranges.push_back(range);\n}\n\n} // namespace\n\nFixedRange Intersected',
+                '\tranges.push_back(range);\n}\n\n' + APPEND_ORDERED + SELECTION_SWEEP
+                + '} // namespace\n\n' + HIGHLIGHT_BATCH
+                + 'FixedRange Intersected')
+
+          # 28. Renderer::highlightRects definition.
+          patch('ui/text/text_renderer.cpp',
+                '\tif (_quoteExpandLink && !_lookupResult.link) {\n'
+                '\t\t_lookupResult.link = _quoteExpandLink;\n'
+                '\t}\n'
+                '\treturn _lookupResult;\n'
+                '}\n'
+                '\n'
+                'crl::time Renderer::now() const {',
+                '\tif (_quoteExpandLink && !_lookupResult.link) {\n'
+                '\t\t_lookupResult.link = _quoteExpandLink;\n'
+                '\t}\n'
+                '\treturn _lookupResult;\n'
+                '}\n'
+                '\n'
+                + HIGHLIGHT_RECTS
+                + 'crl::time Renderer::now() const {')
+
+          # 29. initParagraphBidi uses the batch ratio without a painter.
+          patch('ui/text/text_renderer.cpp',
+                'void Renderer::initParagraphBidi() {\n'
+                '\t_paragraph.resolve(\n'
+                '\t\t_t,\n'
+                '\t\t_paragraphStart,\n'
+                '\t\t_paragraphLength,\n'
+                '\t\t(_paragraphDirection == Qt::RightToLeft),\n'
+                '\t\tint(_paragraphStartBlock - begin(_t->_blocks)),\n'
+                '\t\t-1,\n'
+                '\t\t_p ? _p->paintEngine()->paintDevice()->devicePixelRatioF() : 1.);\n'
+                '}',
+                'void Renderer::initParagraphBidi() {\n'
+                '\t// A painter that failed to begin has no paint engine.\n'
+                '\tconst auto engine = _p ? _p->paintEngine() : nullptr;\n'
+                '\t_paragraph.resolve(\n'
+                '\t\t_t,\n'
+                '\t\t_paragraphStart,\n'
+                '\t\t_paragraphLength,\n'
+                '\t\t(_paragraphDirection == Qt::RightToLeft),\n'
+                '\t\tint(_paragraphStartBlock - begin(_t->_blocks)),\n'
+                '\t\t-1,\n'
+                '\t\t(engine\n'
+                '\t\t\t? engine->paintDevice()->devicePixelRatioF()\n'
+                '\t\t\t: _batch\n'
+                '\t\t\t? _batch->ratio\n'
+                '\t\t\t: 1.));\n'
+                '}')
+
+          # 30. Collect highlights instead of looking up while batching.
+          patch('ui/text/text_renderer.cpp',
+                '\tif (!_p) {\n'
+                '\t\tif (_lookupX < x) {',
+                '\tif (_batch) {\n'
+                '\t\treturn collectLineHighlights(\n'
+                '\t\t\tlineText,\n'
+                '\t\t\tlineStart,\n'
+                '\t\t\tlineLength,\n'
+                '\t\t\tx,\n'
+                '\t\t\t(trimmedLineEnd == _lineStart) && !_elidedLine);\n'
+                '\t}\n'
+                '\tif (!_p) {\n'
+                '\t\tif (_lookupX < x) {')
+
+          # 31. collectLineHighlights + appendTextHighlights + appendObjectHighlight.
+          patch('ui/text/text_renderer.cpp',
+                '\treturn { selX, selX + selWidth };\n'
+                '}\n'
+                '\n'
+                'void Renderer::fillSelectRange(FixedRange range) {',
+                '\treturn { selX, selX + selWidth };\n'
+                '}\n'
+                '\n'
+                + COLLECT_HIGHLIGHTS + APPEND_TEXT_HIGHLIGHTS + APPEND_OBJECT_HIGHLIGHT
+                + 'void Renderer::fillSelectRange(FixedRange range) {')
+
+          print('lib_ui IV patch complete.')
+          PYEOF
       - name: First set up.
         shell: bash
         run: |
