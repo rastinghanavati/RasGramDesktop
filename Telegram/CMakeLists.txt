@@ -3200,6 +3200,8 @@ if (MSVC)
     target_link_libraries(Telegram
     PRIVATE
         delayimp
+        # Qt 6.12 QDnsLookup needs dnsapi, but Qt's private dep doesn't propagate here.
+        dnsapi
     )
     target_link_options(Telegram
     PRIVATE
