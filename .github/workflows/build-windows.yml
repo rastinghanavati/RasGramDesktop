@@ -64,21 +64,21 @@ jobs:
           grep -rn "RasterGLSurface" "$TBUILD/$REPO_NAME/Telegram/lib_ui" \
             && exit 1 || echo "No RasterGLSurface left in lib_ui."
 
-      - name: Limit /MP to 2 processes (avoid OOM on 16 GB runner).
+      - name: Compile serially (/MP1) to avoid OOM on 16 GB runner.
         shell: bash
         run: |
           set -euo pipefail
           OPT="$TBUILD/$REPO_NAME/cmake/options_win.cmake"
           grep -q "Enable multi process build" "$OPT" \
             || { echo "ERROR: /MP line not found in options_win.cmake"; exit 1; }
-          sed -i '/Enable multi process build/s|/MP|/MP2|' "$OPT"
-          grep -q "/MP2" "$OPT" \
-            || { echo "ERROR: /MP2 patch did not apply"; exit 1; }
+          sed -i '/Enable multi process build/s|/MP|/MP1|' "$OPT"
+          grep -q "/MP1" "$OPT" \
+            || { echo "ERROR: /MP1 patch did not apply"; exit 1; }
           if grep -Eq "/MP([^0-9]|$)" "$OPT"; then
             echo "ERROR: bare /MP still present in options_win.cmake"
             exit 1
           fi
-          echo "options_win.cmake now uses /MP2."
+          echo "options_win.cmake now uses /MP1."
 
       - name: Patch lib_ui for Telegram 7.4.5 APIs (Upper, Tracking, style fields).
         shell: bash
@@ -1906,13 +1906,16 @@ jobs:
           -D DESKTOP_APP_DISABLE_CRASH_REPORTS=OFF ^
           -D CMAKE_MSVC_DEBUG_INFORMATION_FORMAT=
 
-          rem Cap the build at 2 concurrent cl.exe processes: /MP2 in
-          rem cmake/options_win.cmake (patched above) allows 2 compiler
-          rem processes per project, and --parallel 1 allows one MSBuild
-          rem node. With bare /MP (one process per core) x 2 nodes the
-          rem Telegram target's huge PCH exhausts the 16 GB runner and
-          rem the build dies with C1060/C3859 (runs 45050855213,
-          rem 45066267989, 45077610630). About 4h total, inside the 6h cap.
+          rem Serial compile: /MP1 in cmake/options_win.cmake (patched
+          rem above) runs one cl.exe at a time, so the whole 16 GB
+          rem runner is available to a single compiler process, and
+          rem --parallel 1 allows one MSBuild node. The /MP2 cap was
+          rem not enough: run 45088942917 still died with 45x C1060
+          rem (compiler out of heap space) on the last, largest TUs
+          rem of the Telegram target, after C3859 had already gone
+          rem away. Microsoft's guidance for C1060 from virtual
+          rem memory pressure is to reduce parallel processes.
+          rem About 4-4.5h total, inside the 6h cap.
           cmake --build ..\out --config Release --target Telegram --parallel 1
 
       - name: Verify build.
