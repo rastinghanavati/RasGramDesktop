@@ -64,6 +64,22 @@ jobs:
           grep -rn "RasterGLSurface" "$TBUILD/$REPO_NAME/Telegram/lib_ui" \
             && exit 1 || echo "No RasterGLSurface left in lib_ui."
 
+      - name: Limit /MP to 2 processes (avoid OOM on 16 GB runner).
+        shell: bash
+        run: |
+          set -euo pipefail
+          OPT="$TBUILD/$REPO_NAME/cmake/options_win.cmake"
+          grep -q "Enable multi process build" "$OPT" \
+            || { echo "ERROR: /MP line not found in options_win.cmake"; exit 1; }
+          sed -i '/Enable multi process build/s|/MP|/MP2|' "$OPT"
+          grep -q "/MP2" "$OPT" \
+            || { echo "ERROR: /MP2 patch did not apply"; exit 1; }
+          if grep -Eq "/MP([^0-9]|$)" "$OPT"; then
+            echo "ERROR: bare /MP still present in options_win.cmake"
+            exit 1
+          fi
+          echo "options_win.cmake now uses /MP2."
+
       - name: Patch lib_ui for Telegram 7.4.5 APIs (Upper, Tracking, style fields).
         shell: bash
         run: |
@@ -1890,10 +1906,14 @@ jobs:
           -D DESKTOP_APP_DISABLE_CRASH_REPORTS=OFF ^
           -D CMAKE_MSVC_DEBUG_INFORMATION_FORMAT=
 
-          rem Limit to 2 parallel projects: with unbounded parallelism the
-          Telegram target's huge PCH exhausts the runner's memory and the
-          build dies with C3859/C1060 in runs 45050855213 and 45066267989.
-          cmake --build ..\out --config Release --target Telegram --parallel 2
+          rem Cap the build at 2 concurrent cl.exe processes: /MP2 in
+          rem cmake/options_win.cmake (patched above) allows 2 compiler
+          rem processes per project, and --parallel 1 allows one MSBuild
+          rem node. With bare /MP (one process per core) x 2 nodes the
+          rem Telegram target's huge PCH exhausts the 16 GB runner and
+          rem the build dies with C1060/C3859 (runs 45050855213,
+          rem 45066267989, 45077610630). About 4h total, inside the 6h cap.
+          cmake --build ..\out --config Release --target Telegram --parallel 1
 
       - name: Verify build.
         run: |
